@@ -1,0 +1,196 @@
+import { defineGroup, type ParityRow, type ParityRowGroupItem } from "./rows"
+
+// Live rows L-01..L-26 from the plan's Parity matrix table. They never run
+// inside bun test; the QA scripts drive them against the isolated OpenCode 2.4.1
+// binary (task 20's live runner and the scripts that own L-17, L-18 and L-19).
+// L-18 runs for every wave from 2 on, so its wave is the first wave that owns it.
+const liveRowInputs: readonly ParityRowGroupItem[] = [
+  {
+    suffix: "01",
+    title: "plugin id oh-my-openagent is present and active in GET /api/plugin",
+    kind: "live",
+    is: ["IS-1"],
+    wave: 2,
+  },
+  {
+    suffix: "02",
+    title: "the sandboxed log carries no plugin error line",
+    kind: "live",
+    is: ["IS-1"],
+    wave: 2,
+  },
+  {
+    suffix: "03",
+    title: "the agent list equals the V1 baseline agent set",
+    kind: "live",
+    is: ["IS-2"],
+    wave: 3,
+  },
+  {
+    suffix: "04",
+    title: "the tool list for a session equals the V1 baseline tool set including the 8 lsp_* names",
+    kind: "live",
+    is: ["IS-3"],
+    wave: 3,
+  },
+  {
+    suffix: "05",
+    title: "MCP servers websearch, context7, grep_app and lsp are registered and lsp_status answers through tools/list",
+    kind: "live",
+    is: ["IS-6"],
+    wave: 3,
+  },
+  {
+    suffix: "06",
+    title: "plugin commands are listed by GET /api/command",
+    kind: "live",
+    is: ["IS-7"],
+    wave: 3,
+  },
+  {
+    suffix: "07",
+    title: "the prompt hook marker is present and the V1 chat.message text effect is visible in the admitted prompt",
+    kind: "live",
+    is: ["IS-4"],
+    wave: 2,
+  },
+  {
+    suffix: "08",
+    title: "the context hook marker is present and the fake model request carries the V1 system markers",
+    kind: "live",
+    is: ["IS-4", "IS-5"],
+    wave: 2,
+  },
+  {
+    suffix: "09",
+    title: "tool hooks leave hashline tags on read results and reject bash file reads with the V1 guard message",
+    kind: "live",
+    is: ["IS-4"],
+    wave: 2,
+  },
+  {
+    suffix: "10",
+    title: "the fake model calls the plugin grep tool and receives a string result in the V1 shape",
+    kind: "live",
+    is: ["IS-3"],
+    wave: 3,
+  },
+  {
+    suffix: "11",
+    title: "event pipeline markers for session created, status idle and execution end appear for one run",
+    kind: "live",
+    is: ["IS-4"],
+    wave: 2,
+  },
+  {
+    suffix: "12",
+    title: "a session left with pending todos receives exactly one idle continuation and then goes idle",
+    kind: "live",
+    is: ["IS-8"],
+    wave: 4,
+  },
+  {
+    suffix: "13",
+    title: "the task tool creates a child session bound to the subagent agent and returns the V1 metadata block",
+    kind: "live",
+    is: ["IS-8"],
+    wave: 4,
+  },
+  {
+    suffix: "14",
+    title: "plugin reload runs cleanup and the MCP child-process count returns to its baseline",
+    kind: "live",
+    is: ["IS-16"],
+    wave: 4,
+  },
+  {
+    suffix: "15",
+    title: "isolation: system opencode version, real opencode.db digest and sandbox removal proven per run",
+    kind: "live",
+    is: ["IS-14"],
+    wave: 2,
+  },
+  {
+    suffix: "16",
+    title: "a sandbox omo.json with a non-default disabled_tools entry takes effect and survives a host config change",
+    kind: "live",
+    is: ["IS-5"],
+    wave: 3,
+  },
+  {
+    suffix: "17",
+    title: "TUI smoke on OpenCode 2 under tmux stays alive with the roster slot marker in the log",
+    kind: "live",
+    is: ["IS-9"],
+    wave: 5,
+  },
+  {
+    suffix: "18",
+    title: "V1 regression on the system OpenCode 1.19.4 equals the V1 baseline with no V2 engine marker in the log",
+    kind: "live",
+    is: ["IS-11"],
+    wave: 2,
+  },
+  {
+    suffix: "19",
+    title:
+      "the installed npm tarball loads on OpenCode 2.4.1 and its V1 entry loads on 1.19.4 with the legacy plugin array form active",
+    kind: "live",
+    is: ["IS-1", "IS-11"],
+    wave: 6,
+  },
+  {
+    suffix: "20",
+    title: "the plugin reaches the active state within 60 s of server start",
+    kind: "live",
+    is: ["IS-1"],
+    wave: 2,
+  },
+  {
+    suffix: "21",
+    title: "a supported host shows the host supported marker and no floor toast",
+    kind: "live",
+    is: ["IS-1", "IS-15"],
+    wave: 2,
+  },
+  {
+    suffix: "22",
+    title: "one server with two locations starts one engine per location with process-wide side effects once",
+    kind: "live",
+    is: ["IS-17"],
+    wave: 2,
+  },
+  {
+    suffix: "23",
+    title: "an allowlisted MCP secret value appears in neither GET /api/mcp nor the sandboxed log",
+    kind: "live",
+    is: ["IS-6"],
+    wave: 3,
+  },
+  {
+    suffix: "24",
+    title: "the translator context fetch count stays within the fetch-worthy events plus one per coalescing batch",
+    kind: "live",
+    is: ["IS-4"],
+    wave: 2,
+  },
+  {
+    suffix: "25",
+    title: "explicit compaction runs the capture and the restore marker and the session continues",
+    kind: "live",
+    is: ["IS-8"],
+    wave: 4,
+  },
+  {
+    suffix: "26",
+    title: "a finished background subagent session wakes its parent with the next admitted prompt",
+    kind: "live",
+    is: ["IS-8"],
+    wave: 4,
+  },
+]
+
+export const liveRows: ParityRow[] = defineGroup("L", liveRowInputs).map((row) => ({
+  ...row,
+  live: row.id,
+}))
