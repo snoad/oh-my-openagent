@@ -1,6 +1,7 @@
 import * as Plugin from "@opencode/plugin/tui/plugin"
 
-import { OPENCODE_V2_NOTICE_DURATION_MS, OPENCODE_V2_NOTICE_MESSAGE, OPENCODE_V2_NOTICE_TITLE } from "./startup-notice"
+import { buildUnsupportedHostNotice, OPENCODE_V2_NOTICE_DURATION_MS } from "./startup-notice"
+import { parseHostVersion, type HostVersionInput } from "./version-guard"
 
 type NoticeToast = {
   readonly ui: {
@@ -15,10 +16,21 @@ type NoticeToast = {
   }
 }
 
-export function showOpenCodeV2Notice(context: NoticeToast): void {
+type NoticeContext = NoticeToast & {
+  readonly app?: HostVersionInput
+}
+
+export function showOpenCodeV2Notice(context: NoticeContext): void {
+  // The floor toast only fires for a host that reports a version the guard
+  // rejects; supported hosts get no toast at all.
+  const version = context.app?.version
+  if (typeof version !== "string" || version.length === 0) return
+  const guard = parseHostVersion(context.app ?? {})
+  if (guard.ok) return
+  const notice = buildUnsupportedHostNotice(guard.found)
   context.ui.toast.show({
-    title: OPENCODE_V2_NOTICE_TITLE,
-    message: OPENCODE_V2_NOTICE_MESSAGE,
+    title: notice.title,
+    message: notice.message,
     variant: "warning",
     duration: OPENCODE_V2_NOTICE_DURATION_MS,
   })

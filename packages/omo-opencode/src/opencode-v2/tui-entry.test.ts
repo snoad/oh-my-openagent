@@ -1,23 +1,37 @@
 import { describe, expect, it } from "bun:test"
 
-import { NATIVE_EDITION_GUIDE_URL, NATIVE_EDITION_INSTALL_COMMAND } from "../cli/native-edition-hint"
 import tuiModule from "../tui"
+import { OPENCODE_V2_MIN_VERSION } from "./startup-notice"
 import { showOpenCodeV2Notice } from "./tui-entry"
 
 type ShownToast = { readonly title: string; readonly message: string; readonly variant: string }
 
-function recordingContext(): {
+type GuardedContext = Parameters<typeof showOpenCodeV2Notice>[0]
+
+function recordingContext(version: string): {
   readonly shown: ShownToast[]
-  readonly context: Parameters<typeof showOpenCodeV2Notice>[0]
+  readonly context: GuardedContext
 } {
   const shown: ShownToast[] = []
-  return { shown, context: { ui: { toast: { show: (options) => shown.push(options) } } } }
+  return {
+    shown,
+    context: {
+      app: { name: "opencode", version, channel: "stable" },
+      ui: {
+        toast: {
+          show: (options) => {
+            shown.push(options)
+          },
+        },
+      },
+    },
+  }
 }
 
 describe("OpenCode 2 TUI notice", () => {
-  it("shows one warning toast that points to OmO Native", () => {
+  it("shows exactly one warning toast naming the minimum for a below-floor host", () => {
     // given
-    const { shown, context } = recordingContext()
+    const { shown, context } = recordingContext("2.3.9")
 
     // when
     showOpenCodeV2Notice(context)
@@ -25,14 +39,24 @@ describe("OpenCode 2 TUI notice", () => {
     // then
     expect(shown).toHaveLength(1)
     expect(shown[0]?.variant).toBe("warning")
-    expect(shown[0]?.message).toContain(NATIVE_EDITION_INSTALL_COMMAND)
-    expect(shown[0]?.message).toContain(NATIVE_EDITION_GUIDE_URL)
+    expect(shown[0]?.message).toContain(OPENCODE_V2_MIN_VERSION)
   })
 
-  it("keeps the V1 tui entry and adds a V2 setup that shows the notice on every start", async () => {
+  it("shows no toast for a supported host", () => {
+    // given
+    const { shown, context } = recordingContext("2.4.1")
+
+    // when
+    showOpenCodeV2Notice(context)
+
+    // then
+    expect(shown).toHaveLength(0)
+  })
+
+  it("keeps the V1 tui entry and adds a V2 setup that guards on every start", async () => {
     // given
     const definition: Record<string, unknown> = tuiModule
-    const { shown, context } = recordingContext()
+    const { shown, context } = recordingContext("2.3.9")
     const setup = definition["setup"]
 
     // when

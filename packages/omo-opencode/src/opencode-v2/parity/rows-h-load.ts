@@ -1,11 +1,12 @@
 import { expect } from "./bun-test-shim"
 
 import pluginModule from "../../index"
+import { parseHostVersion, type HostVersionRejectReason } from "../version-guard"
 import { defineGroup, type ParityRow } from "./rows"
 
 // Wave-0 export shape facts, asserted through the real plugin entry. The SDK
 // pin and Plugin.define identity live in sdk-surface.test.ts (task 1), and the
-// version guard matrix rows below are flipped by task 8.
+// version guard matrix rows are checked by task 8 through parseHostVersion.
 function checkServerExportKeys(): void {
   // given
   const definition = pluginModule
@@ -29,6 +30,22 @@ function checkServerExportId(): void {
   expect(definition.id).toBe("oh-my-openagent")
   expect(typeof server).toBe("function")
   expect(typeof setup).toBe("function")
+}
+
+function checkGuardAdmitted(version: string, parts: readonly [number, number, number]): void {
+  // given
+  const guard = parseHostVersion({ name: "opencode", version, channel: "stable" })
+
+  // then
+  expect(guard).toEqual({ ok: true, major: parts[0], minor: parts[1], patch: parts[2] })
+}
+
+function checkGuardRejected(version: string, reason: HostVersionRejectReason): void {
+  // given
+  const guard = parseHostVersion({ name: "opencode", version, channel: "stable" })
+
+  // then
+  expect(guard).toEqual({ ok: false, reason, found: version })
 }
 
 export const hLoadRows: ParityRow[] = defineGroup("H-LOAD", [
@@ -56,6 +73,8 @@ export const hLoadRows: ParityRow[] = defineGroup("H-LOAD", [
     kind: "hermetic",
     is: ["IS-15"],
     wave: 1,
+    status: "checked",
+    check: () => checkGuardAdmitted("2.4.1", [2, 4, 1]),
   },
   {
     suffix: "GUARD-SUPPORTED-2-4-0",
@@ -63,6 +82,8 @@ export const hLoadRows: ParityRow[] = defineGroup("H-LOAD", [
     kind: "hermetic",
     is: ["IS-15"],
     wave: 1,
+    status: "checked",
+    check: () => checkGuardAdmitted("2.4.0", [2, 4, 0]),
   },
   {
     suffix: "GUARD-BELOW-FLOOR-2-3-9",
@@ -70,6 +91,8 @@ export const hLoadRows: ParityRow[] = defineGroup("H-LOAD", [
     kind: "hermetic",
     is: ["IS-15"],
     wave: 1,
+    status: "checked",
+    check: () => checkGuardRejected("2.3.9", "below-floor"),
   },
   {
     suffix: "GUARD-ABOVE-VERIFIED-3-0-0",
@@ -77,6 +100,8 @@ export const hLoadRows: ParityRow[] = defineGroup("H-LOAD", [
     kind: "hermetic",
     is: ["IS-15"],
     wave: 1,
+    status: "checked",
+    check: () => checkGuardRejected("3.0.0", "above-verified"),
   },
   {
     suffix: "GUARD-MALFORMED",
@@ -84,5 +109,7 @@ export const hLoadRows: ParityRow[] = defineGroup("H-LOAD", [
     kind: "hermetic",
     is: ["IS-15"],
     wave: 1,
+    status: "checked",
+    check: () => checkGuardRejected("2.4.x", "unparseable"),
   },
 ])
