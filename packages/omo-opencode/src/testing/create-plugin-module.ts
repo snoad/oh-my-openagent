@@ -69,6 +69,7 @@ export type PluginModuleDeps = {
   loadConfigChain: typeof validatePluginConfig
   loadPluginConfig: typeof loadPluginConfig
   recordPluginTelemetry: typeof recordPluginTelemetry
+  ensureTuiPluginEntry: typeof ensureTuiPluginEntry
   initI18n: typeof initI18n
   initializeOpenClaw: typeof initializeOpenClaw
   isTmuxIntegrationEnabled: typeof isTmuxIntegrationEnabled
@@ -103,6 +104,7 @@ const defaultPluginModuleDeps: PluginModuleDeps = {
   loadConfigChain: validatePluginConfig,
   loadPluginConfig,
   recordPluginTelemetry,
+  ensureTuiPluginEntry,
   initI18n,
   initializeOpenClaw,
   isTmuxIntegrationEnabled,
@@ -237,7 +239,7 @@ export function createPluginModule(overrides: Partial<PluginModuleDeps> = {}): P
       })
     }
     try {
-      ensureTuiPluginEntry()
+      deps.ensureTuiPluginEntry()
     } catch (error) {
       deps.log("[tui] tui.json self-heal failed", {
         error: error instanceof Error ? error.message : String(error),

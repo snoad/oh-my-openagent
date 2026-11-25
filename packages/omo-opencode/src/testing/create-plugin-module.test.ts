@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { getLocale, initI18n, t } from "../shared/i18n"
@@ -222,6 +222,56 @@ describe("createPluginModule()", () => {
         expect(readFileSync(join(configDir, "tui.json"), "utf-8")).toContain(`"${PLUGIN_NAME}"`)
       } finally {
         rmSync(configDir, { recursive: true, force: true })
+        if (originalConfigDir === undefined) {
+          delete process.env.OPENCODE_CONFIG_DIR
+        } else {
+          process.env.OPENCODE_CONFIG_DIR = originalConfigDir
+        }
+      }
+    })
+  })
+
+  describe("#given the TUI plugin entry self-heal dependency", () => {
+    it("#then the default dependency is the real self-heal and an injected override replaces it exactly once", async () => {
+      // given two sandbox config dirs that register the plugin for the self-heal
+      const originalConfigDir = process.env.OPENCODE_CONFIG_DIR
+      const defaultConfigDir = mkdtempSync(join(tmpdir(), "omo-tui-dep-default-"))
+      const overrideConfigDir = mkdtempSync(join(tmpdir(), "omo-tui-dep-override-"))
+      for (const dir of [defaultConfigDir, overrideConfigDir]) {
+        writeFileSync(join(dir, "opencode.json"), JSON.stringify({ plugin: [PLUGIN_NAME] }), "utf-8")
+      }
+      const ensureTuiPluginEntry = mock(() => ({ changed: false, reason: "overridden" }))
+
+      try {
+        // given no override, the default dependency is the real function
+        process.env.OPENCODE_CONFIG_DIR = defaultConfigDir
+        const defaultModule = createTestPluginModule()
+
+        // when
+        await defaultModule.server({
+          directory: "/tmp/project",
+          client: {},
+        } as Parameters<typeof defaultModule.server>[0])
+
+        // then the real self-heal ran and wrote the plugin entry
+        expect(readFileSync(join(defaultConfigDir, "tui.json"), "utf-8")).toContain(`"${PLUGIN_NAME}"`)
+
+        // given the dependency is overridden with a recording stub
+        process.env.OPENCODE_CONFIG_DIR = overrideConfigDir
+        const overrideModule = createTestPluginModule({ ensureTuiPluginEntry })
+
+        // when
+        await overrideModule.server({
+          directory: "/tmp/project",
+          client: {},
+        } as Parameters<typeof overrideModule.server>[0])
+
+        // then the override ran exactly once and the real self-heal no longer wrote tui.json
+        expect(ensureTuiPluginEntry).toHaveBeenCalledTimes(1)
+        expect(existsSync(join(overrideConfigDir, "tui.json"))).toBe(false)
+      } finally {
+        rmSync(defaultConfigDir, { recursive: true, force: true })
+        rmSync(overrideConfigDir, { recursive: true, force: true })
         if (originalConfigDir === undefined) {
           delete process.env.OPENCODE_CONFIG_DIR
         } else {
