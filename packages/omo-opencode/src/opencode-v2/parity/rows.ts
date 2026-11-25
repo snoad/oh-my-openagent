@@ -3,6 +3,7 @@ import { expect } from "./bun-test-shim"
 import { LANDED_WAVES } from "./lan"
 import { hBoundRows } from "./rows-h-bound"
 import { hCliRows } from "./rows-h-cli"
+import { hCodecRows } from "./rows-h-codec"
 import { hFakeRows } from "./rows-h-fake"
 import { hLoadRows } from "./rows-h-load"
 import { liveRows } from "./rows-live"
@@ -148,6 +149,7 @@ export const PARITY_ROWS: ParityRow[] = [
   ...hBoundRows,
   ...hFakeRows,
   ...hCliRows,
+  ...hCodecRows,
   ...liveRows,
   ...hMetaRows,
 ]
