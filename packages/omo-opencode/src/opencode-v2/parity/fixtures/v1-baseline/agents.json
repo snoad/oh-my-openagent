@@ -1,0 +1,170 @@
+[
+  {
+    "hidden": null,
+    "id": "sisyphus",
+    "mode": "primary",
+    "name": "Sisyphus - ultraworker",
+    "native": false
+  },
+  {
+    "hidden": true,
+    "id": "sisyphus",
+    "mode": "primary",
+    "name": "Sisyphus - ultraworker",
+    "native": false
+  },
+  {
+    "hidden": null,
+    "id": "hephaestus",
+    "mode": "primary",
+    "name": "Hephaestus - Deep Agent",
+    "native": false
+  },
+  {
+    "hidden": true,
+    "id": "hephaestus",
+    "mode": "primary",
+    "name": "Hephaestus - Deep Agent",
+    "native": false
+  },
+  {
+    "hidden": null,
+    "id": "prometheus",
+    "mode": "primary",
+    "name": "Prometheus - Plan Builder",
+    "native": false
+  },
+  {
+    "hidden": true,
+    "id": "prometheus",
+    "mode": "primary",
+    "name": "Prometheus - Plan Builder",
+    "native": false
+  },
+  {
+    "hidden": null,
+    "id": "atlas",
+    "mode": "primary",
+    "name": "Atlas - Plan Executor",
+    "native": false
+  },
+  {
+    "hidden": true,
+    "id": "atlas",
+    "mode": "primary",
+    "name": "Atlas - Plan Executor",
+    "native": false
+  },
+  {
+    "hidden": null,
+    "id": "metis",
+    "mode": "subagent",
+    "name": "Metis - Plan Consultant",
+    "native": false
+  },
+  {
+    "hidden": true,
+    "id": "metis",
+    "mode": "subagent",
+    "name": "Metis - Plan Consultant",
+    "native": false
+  },
+  {
+    "hidden": null,
+    "id": "momus",
+    "mode": "subagent",
+    "name": "Momus - Plan Critic",
+    "native": false
+  },
+  {
+    "hidden": true,
+    "id": "momus",
+    "mode": "subagent",
+    "name": "Momus - Plan Critic",
+    "native": false
+  },
+  {
+    "hidden": null,
+    "id": "sisyphus-junior",
+    "mode": "subagent",
+    "name": "Sisyphus-Junior",
+    "native": false
+  },
+  {
+    "hidden": true,
+    "id": "sisyphus-junior",
+    "mode": "subagent",
+    "name": "Sisyphus-Junior",
+    "native": false
+  },
+  {
+    "hidden": true,
+    "id": "build",
+    "mode": "subagent",
+    "name": "build",
+    "native": true
+  },
+  {
+    "hidden": true,
+    "id": "compaction",
+    "mode": "primary",
+    "name": "compaction",
+    "native": true
+  },
+  {
+    "hidden": null,
+    "id": "explore",
+    "mode": "subagent",
+    "name": "explore",
+    "native": true
+  },
+  {
+    "hidden": null,
+    "id": "general",
+    "mode": "subagent",
+    "name": "general",
+    "native": true
+  },
+  {
+    "hidden": null,
+    "id": "librarian",
+    "mode": "subagent",
+    "name": "librarian",
+    "native": false
+  },
+  {
+    "hidden": null,
+    "id": "multimodal-looker",
+    "mode": "subagent",
+    "name": "multimodal-looker",
+    "native": false
+  },
+  {
+    "hidden": null,
+    "id": "oracle",
+    "mode": "subagent",
+    "name": "oracle",
+    "native": false
+  },
+  {
+    "hidden": true,
+    "id": "plan",
+    "mode": "subagent",
+    "name": "plan",
+    "native": true
+  },
+  {
+    "hidden": true,
+    "id": "summary",
+    "mode": "primary",
+    "name": "summary",
+    "native": true
+  },
+  {
+    "hidden": true,
+    "id": "title",
+    "mode": "primary",
+    "name": "title",
+    "native": true
+  }
+]

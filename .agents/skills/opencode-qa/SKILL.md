@@ -62,6 +62,7 @@ sandbox, free port, server start/stop, and an EXIT-trap cleanup). It requires
 | Prove a hook / action / event fired | B | `scripts/sse-hook-probe.sh` | `references/events-hooks.md` |
 | Prove serve-topology wake runner-split (reproduced/fixed) | B | `scripts/serve-wake-split-probe.sh --expect reproduced\|fixed --evidence-dir DIR` (self-test: `--self-test`; fake LLM: `scripts/lib/fake-openai-server.mjs`) | `references/events-hooks.md` |
 | Smoke-test the TUI | C | `scripts/tui-smoke.sh` | `references/tui-tmux.md` |
+| QA the OpenCode 2 plugin adapter (opencode-v2) | E | `scripts/v2-plugin-probe.sh` | - |
 | Write/run a test in the opencode source | - | (bun test) | `references/testing-harness.md` |
 | Drive opencode from a Bun/TS script | - | (SDK) | `references/sdk.md` |
 
@@ -171,6 +172,74 @@ Ad hoc queries: `opencode db "<SQL>" --format json`. Schema, tested query
 shapes with timings, the legacy `message`/`part` vs V2 `session_message`
 distinction, and the 25 GB caveat: `references/db-investigation.md`.
 
+## Case E: the OpenCode 2 plugin adapter
+
+Use this case for any change under `packages/omo-opencode/src/opencode-v2/`
+or to the dual export (the root package.json `.` / `./tui` entries).
+OpenCode 2 is a different host with its own plugin contract; the V1 cases
+above do not exercise it.
+
+The isolation rule is absolute: NEVER install a global `@opencode/cli` and
+NEVER touch the system `opencode` (V1). The scripts bootstrap a pinned host
+into `$OC2_HOME` (`~/.cache/omo-qa/opencode-v2/<version>`; the version pin
+lives in `scripts/lib/v2-versions.sh`) and invoke
+`$OC2_HOME/node_modules/.bin/opencode2` directly. `OC2_HOME` never goes on
+PATH. Every probe must leave the system binary, its version and the real
+`opencode.db` identical before and after; the verdict JSON proves it with
+`systemVersionBefore`/`systemVersionAfter` and
+`dbDigestBefore`/`dbDigestAfter`.
+
+```bash
+bash scripts/v2-bootstrap.sh       # install/verify the pinned OC2 host (idempotent)
+bash scripts/v2-plugin-probe.sh    # sandboxed serve, GET /api/plugin, one JSON verdict
+```
+
+| Script | Purpose |
+|---|---|
+| `scripts/v2-bootstrap.sh` | Installs or verifies the pinned OpenCode 2 host inside `$OC2_HOME`. No `npm i -g`, no PATH mutation, no writes outside `$OC2_HOME`. |
+| `scripts/v2-plugin-probe.sh` | Boots a sandboxed V2 server, waits for the plugin in `GET /api/plugin`, prints one JSON verdict (`pluginIds`, `loaded`, `loadErrors`, `isolation`). Exit 0 loaded clean, 2 not loaded, 1 harness error. `--self-test` drives the broken-plugin failure path. |
+| `scripts/v2-v1-baseline.sh` | Captures the V1 agent, prompt and tool baseline through the V1 server API into committed fixtures under `parity/fixtures/v1-baseline/` (byte-deterministic). |
+| `scripts/v2-capture-shapes.sh` | Records 2.4.1 host shapes (events, session context, tools, agents, mcp, commands, hook payloads) as fixtures under `parity/fixtures/host-2.4.1/`, driving runs through the scenario fake model `scripts/lib/v2-fake-model.mjs`. |
+| `v2-parity-live.sh` | NOT on disk yet. Arrives with wave 1: `--wave <n>` will run every live parity row up to wave `n` against a sandboxed `opencode2 serve` with the fake model. |
+
+Proving a hook fired takes BOTH halves: the `[opencode-v2] hook <name> fired`
+marker in the sandboxed plugin log (emitted once per session per hook) AND
+the observed effect. For context hooks the effect is the request the fake
+model received: `scripts/lib/v2-fake-model.mjs` appends every request body
+verbatim to `requests.jsonl` in its output dir. The fake speaks the OpenAI
+Responses API the 2.4.1 host actually talks (`POST <base>/v1/responses`, SSE
+streaming), also handles chat completions, and ships six fail modes for
+error-path QA.
+
+Host facts to expect in captures (observed live on 2.4.1): `session.status`
+and `session.idle` are never emitted (the terminal signal is
+`session.execution.*`; the plugin-side `experimental.idle` hook fires
+instead); serve must never use `--service` (that binds the shared managed
+port 49374, and a double-forked daemon can outlive the launcher kill, so the
+sandbox library reaps leftover processes by matching the sandbox tag in
+`/proc/*/environ`); auth is HTTP Basic `opencode:$OPENCODE_PASSWORD`; the V2
+plugin config shape is `{"plugin": ["<absolute-plugin-dir>"]}` (plain path
+strings) in `$XDG_CONFIG_HOME/opencode/opencode.json`; fixtures are
+kebab-case under `parity/fixtures/`, enforced by the V2 boundary guard.
+
+Evidence lands under the gitignored evidence root
+`.omo/evidence/<YYYYMMDD>-opencode-v2-compat/`: per-task subdirs `task-<n>/`
+today, and from wave 1 the live runner groups its captures under `wave-<n>/`
+(a `summary.md` there records what was tested, what was observed, why it is
+enough, and what was omitted). Nothing under that root is ever committed.
+
+The live parity rows are L-01 through L-26 in
+`packages/omo-opencode/src/opencode-v2/parity/rows-live.ts`; each wave runs
+the rows it owns through the live runner:
+
+| Wave | Rows |
+|---|---|
+| 2 | L-01, L-02, L-07, L-08, L-09, L-11, L-15, L-18, L-20, L-21, L-22, L-24 |
+| 3 | L-03, L-04, L-05, L-06, L-10, L-16, L-23 |
+| 4 | L-12, L-13, L-14, L-25, L-26 |
+| 5 | L-17 |
+| 6 | L-19 |
+
 ## Scripts index
 
 Run any script with `--self-test` to verify it against the live machine, or
@@ -187,6 +256,10 @@ isolated sandbox and clean up on exit.
 | `scripts/server-smoke.sh` | B | `/global/health` healthy, `/doc` >=100 paths, no-auth -> 401 |
 | `scripts/sse-hook-probe.sh` | B | `/event` opens and delivers `server.connected` |
 | `scripts/tui-smoke.sh` | C | TUI renders under tmux, tears down, real DB untouched |
+| `scripts/v2-bootstrap.sh` | E | OC2 prints the pinned version; second run performs no install (install marker mtime unchanged); system opencode path, version and PATH untouched |
+| `scripts/v2-plugin-probe.sh` | E | a broken plugin (default-exports `{}`) exits 2 with `loaded=false`, the host load-error line captured, and an identical real DB digest before/after |
+| `scripts/v2-v1-baseline.sh` | E | the existing capture verifies; a re-capture of agents, prompts and tools is byte-identical |
+| `scripts/v2-capture-shapes.sh` | E | offline (no host): fake model serves scenario text and tool-call steps, `requests.jsonl` is recorded, all six fail modes answer their codes, SSE parsing holds |
 
 ## Risks and caveats
 

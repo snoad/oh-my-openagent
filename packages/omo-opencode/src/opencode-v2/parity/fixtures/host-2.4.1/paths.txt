@@ -1,0 +1,10 @@
+home       /tmp/oqa-v2-sandbox.5Lvyln/home
+data       /tmp/oqa-v2-sandbox.5Lvyln/data/opencode
+cache      /tmp/oqa-v2-sandbox.5Lvyln/cache/opencode
+config     /tmp/oqa-v2-sandbox.5Lvyln/config/opencode
+state      /tmp/oqa-v2-sandbox.5Lvyln/state/opencode
+tmp        /tmp/oqa-v2-sandbox.5Lvyln/tmp/opencode
+bin        /tmp/oqa-v2-sandbox.5Lvyln/cache/opencode/bin
+log        /tmp/oqa-v2-sandbox.5Lvyln/data/opencode/log
+repos      /tmp/oqa-v2-sandbox.5Lvyln/data/opencode/repos
+db         /tmp/oqa-v2-sandbox.5Lvyln/data/opencode/opencode.db
