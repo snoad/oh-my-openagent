@@ -1,0 +1,20 @@
+{
+  "data": [
+    {
+      "description": "create an automation, or list, pause, resume and delete this project's automations",
+      "name": "automation"
+    },
+    {
+      "description": "keep working until an objective is met [pause|resume|clear]",
+      "name": "goal"
+    },
+    {
+      "description": "guided AGENTS.md setup",
+      "name": "init"
+    },
+    {
+      "description": "review changes [commit|branch|pr], defaults to uncommitted",
+      "name": "review"
+    }
+  ]
+}

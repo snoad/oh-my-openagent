@@ -1,0 +1,411 @@
+{
+  "tools": [
+    {
+      "id": "execute",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "generate_image",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "images": {
+            "description": "Images to edit, or to use as references for style and subject when creating a new image, in order. Local file paths (relative to the session directory or absolute) or http(s) URLs.",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "type": "array"
+          },
+          "model": {
+            "description": "NEVER set this unless the user explicitly asks for a particular image model or variant. The value is written as \"providerID/modelID\", or \"providerID/modelID#variant\" to include a variant. Do not guess the ID: look it up with the models tool using type: \"image\", filtering to your own provider first.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Where to save the image, relative to the session directory or absolute. The extension is replaced with the image's real format, and an existing file is overwritten. Defaults to a new file in the session's temp folder.",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "What to create, or for edits, what to change. Be specific about subject, style, composition and any text that should appear in the image.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "generate_video",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "aspect": {
+            "description": "Aspect ratio as \"width:height\", such as \"16:9\" or \"9:16\", or \"auto\" to follow the start image.",
+            "type": "string"
+          },
+          "duration": {
+            "description": "Length in seconds.",
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "end": {
+            "description": "Image the video ends on exactly. A local file path or an http(s) URL.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "model": {
+            "description": "NEVER set this unless the user explicitly asks for a particular video model. The value is written as \"providerID/modelID\". Do not guess the ID: look it up with the models tool using type: \"video\", filtering to your own provider first.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Where to save the video, relative to the session directory or absolute, usually ending in .mp4. An existing file is overwritten. Further videos from the same job go next to it with -1, -2, … before the extension. Defaults to a new file in the session's temp folder.",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "What happens in the video. Describe the subject, action, camera movement, style and, when sound is on, any dialogue or sound.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "references": {
+            "description": "Images, videos or audio that guide the subject, style, motion or voice without being shown as-is. Local file paths or http(s) URLs.",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "resolution": {
+            "description": "Output resolution, such as \"480p\", \"720p\", \"1080p\" or \"4k\".",
+            "type": "string"
+          },
+          "sound": {
+            "description": "Whether the video has generated sound. Unset uses the model's default.",
+            "type": "boolean"
+          },
+          "start": {
+            "description": "Image the video starts on exactly. A local file path (relative to the session directory or absolute) or an http(s) URL.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "glob",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "hidden": {
+            "description": "Include hidden files and directories (default: false).",
+            "type": "boolean"
+          },
+          "limit": {
+            "description": "Maximum number of matching files to return (default: 100)",
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "path": {
+            "description": "Directory to search. Defaults to the current working directory.",
+            "type": "string"
+          },
+          "pattern": {
+            "description": "Glob pattern to match files against",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "grep",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "caseSensitive": {
+            "description": "Use case-sensitive matching (default: true).",
+            "type": "boolean"
+          },
+          "include": {
+            "description": "Glob pattern to filter files (for example, \"*.js\" or \"*.{ts,tsx}\")",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum number of matching lines to return (default: 100)",
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "literal": {
+            "description": "Treat `pattern` as exact text instead of a regular expression (default: false).",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "File or directory to search. Defaults to the current working directory.",
+            "type": "string"
+          },
+          "pattern": {
+            "description": "Regular expression or literal text to match in file contents.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "patch",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "patchText": {
+            "description": "The full patch text describing add, update, and delete operations",
+            "type": "string"
+          }
+        },
+        "required": [
+          "patchText"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "question",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "questions": {
+            "description": "Questions to ask",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "header": {
+                  "description": "Very short label (max 30 chars)",
+                  "type": "string"
+                },
+                "multiple": {
+                  "type": "boolean"
+                },
+                "options": {
+                  "description": "Available choices",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "description": {
+                        "description": "Explanation of choice",
+                        "type": "string"
+                      },
+                      "label": {
+                        "description": "Display text (1-5 words, concise)",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "label",
+                      "description"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "question": {
+                  "description": "Complete question",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "question",
+                "header",
+                "options"
+              ],
+              "type": "object"
+            },
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "questions"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "read",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "description": "The maximum number of lines or directory entries to read (defaults to and capped at 2000)",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "offset": {
+            "description": "The line or directory entry to start reading from (1-based)",
+            "type": "integer"
+          },
+          "path": {
+            "description": "File or directory to read",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "shell",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "background": {
+            "description": "Run the command in the background and return immediately (useful for dev servers and long-running builds). You do not need to use '&' at the end of the command when using this parameter. You will be notified when it completes. DO NOT poll for completion.",
+            "type": "boolean"
+          },
+          "command": {
+            "description": "Shell command string to execute",
+            "type": "string"
+          },
+          "timeout": {
+            "description": "Optional timeout in milliseconds (default 120000). When it expires, a foreground command moves to the background and a background command is stopped.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "workdir": {
+            "description": "Working directory to execute the command in. Defaults to the current working directory. When possible, avoid changing directories in the command and set the working directory here instead.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "skill",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "The ID of an available skill or a skill explicitly referenced by the user",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "subagent",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "description": "The type of specialized agent to use for this task. If the user asks for a subagent by a name that is not one of the available subagents, they most likely mean a model: pick a suitable agent and pass the name through the model parameter instead.",
+            "type": "string"
+          },
+          "description": {
+            "description": "A short 3-5 word label for the task, displayed to the user",
+            "type": "string"
+          },
+          "model": {
+            "description": "NEVER set this unless the user explicitly asks for a particular model or variant. It must be a chat model; image and decision models can't run subagents. The value is written as \"providerID/modelID\", or \"providerID/modelID#variant\" to include a variant. Do not guess the ID: look the model up with the models tool, filtering to your own provider first.",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "The task for the subagent to perform",
+            "type": "string"
+          },
+          "sessionID": {
+            "description": "Send a follow-up to an existing subagent, running or finished. Omit to start a new one.",
+            "pattern": "^ses",
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent",
+          "description",
+          "prompt"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "webfetch",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "format": {
+            "description": "The format to return the content in. Defaults to markdown.",
+            "enum": [
+              "text",
+              "markdown",
+              "html"
+            ],
+            "type": "string"
+          },
+          "timeout": {
+            "description": "Optional timeout in seconds (maximum: 120)",
+            "exclusiveMinimum": 0,
+            "maximum": 120,
+            "type": "number"
+          },
+          "url": {
+            "description": "The HTTP or HTTPS URL to fetch content from",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "websearch",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "description": "Websearch query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    }
+  ]
+}

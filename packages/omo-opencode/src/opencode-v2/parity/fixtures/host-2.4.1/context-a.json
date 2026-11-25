@@ -1,0 +1,61 @@
+{
+  "data": [
+    {
+      "files": [],
+      "id": "msg_211436af1001kM6BdKkRZP1eCU",
+      "text": "Reply with exactly: A_FINAL",
+      "time": {
+        "created": 1795585960961
+      },
+      "type": "user"
+    },
+    {
+      "agent": "build",
+      "content": [
+        {
+          "native": {
+            "itemId": "msg_1"
+          },
+          "text": "A_FINAL: plain text answer from the v2 fake model",
+          "type": "text"
+        }
+      ],
+      "cost": 0,
+      "finish": "stop",
+      "id": "msg_211436c10001NWbR70eQRSWIck",
+      "model": {
+        "id": "gpt-fake",
+        "providerID": "openai"
+      },
+      "snapshot": {
+        "end": "acd5a1e76ffa8ab10e4b4db07555102a4c720844",
+        "files": [],
+        "start": "acd5a1e76ffa8ab10e4b4db07555102a4c720844"
+      },
+      "time": {
+        "completed": 1795585961063,
+        "created": 1795585960982,
+        "firstToken": 1795585961047,
+        "streamed": 1795585961053
+      },
+      "tokens": {
+        "cache": {
+          "read": 0,
+          "write": 0
+        },
+        "input": 10,
+        "output": 5,
+        "reasoning": 0
+      },
+      "type": "assistant"
+    },
+    {
+      "id": "msg_211436c6c001kfxMa1KKIZunHB",
+      "outcome": "succeeded",
+      "time": {
+        "created": 1795585961068
+      },
+      "type": "idle"
+    }
+  ]
+}
