@@ -1,0 +1,785 @@
+{
+  "envDependent": {
+    "interactive_bash": true
+  },
+  "tools": [
+    {
+      "id": "background_cancel",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "all": {
+            "description": "Cancel all running background tasks (default: false)",
+            "type": "boolean"
+          },
+          "taskId": {
+            "description": "Task ID to cancel (required if all=false)",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "id": "background_output",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "block": {
+            "description": "Wait for completion (default: false). System notifies when done, so blocking is rarely needed.",
+            "type": "boolean"
+          },
+          "from_end": {
+            "description": "Read messages from the END of the session (default: false). Pass true to get the most-recent / final assistant message in the output. Recommended when you want the result of a completed task.",
+            "type": "boolean"
+          },
+          "full_session": {
+            "description": "Return full session messages with filters (default: false)",
+            "type": "boolean"
+          },
+          "include_thinking": {
+            "description": "Include thinking/reasoning parts in full_session output (default: false)",
+            "type": "boolean"
+          },
+          "include_tool_results": {
+            "description": "Include tool results in full_session output (default: false)",
+            "type": "boolean"
+          },
+          "message_limit": {
+            "description": "Max messages to return (capped at 200)",
+            "type": "number"
+          },
+          "since_message_id": {
+            "description": "Return messages after this message ID (exclusive)",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "background task ID (`bg_...`) from launch/completion; not a session ID (`ses_...`).",
+            "type": "string"
+          },
+          "thinking_max_chars": {
+            "description": "Max characters for thinking content (default: 2000)",
+            "type": "number"
+          },
+          "timeout": {
+            "description": "Max wait time in ms (default: 60000, max: 600000)",
+            "type": "number"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "bash",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "command": {
+            "description": "The command to execute",
+            "type": "string"
+          },
+          "timeout": {
+            "description": "Optional timeout in milliseconds",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "workdir": {
+            "description": "The working directory to run the command in. Defaults to the current directory. Use this instead of 'cd' commands.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "call_omo_agent",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "description": {
+            "description": "A short (3-5 words) description of the task",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "The task for the agent to perform",
+            "type": "string"
+          },
+          "run_in_background": {
+            "description": "REQUIRED. true: run asynchronously (use background_output to get results), false: run synchronously and wait for completion",
+            "type": "boolean"
+          },
+          "session_id": {
+            "description": "Existing Task session to continue",
+            "type": "string"
+          },
+          "subagent_type": {
+            "description": "The agent to invoke. Only explore and librarian are allowed.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "prompt",
+          "subagent_type",
+          "run_in_background"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "edit",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "filePath": {
+            "description": "The absolute path to the file to modify",
+            "type": "string"
+          },
+          "newString": {
+            "description": "The text to replace it with (must be different from oldString)",
+            "type": "string"
+          },
+          "oldString": {
+            "description": "The text to replace",
+            "type": "string"
+          },
+          "replaceAll": {
+            "description": "Replace all occurrences of oldString (default false)",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "filePath",
+          "oldString",
+          "newString"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "glob",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "path": {
+            "description": "The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter \"undefined\" or \"null\" - simply omit it for the default behavior. Must be a valid directory path if provided.",
+            "type": "string"
+          },
+          "pattern": {
+            "description": "The glob pattern to match files against",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "glob",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "path": {
+            "description": "The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter \"undefined\" or \"null\" - simply omit it for the default behavior. Must be a valid directory path if provided.",
+            "type": "string"
+          },
+          "pattern": {
+            "description": "The glob pattern to match files against",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "grep",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "include": {
+            "description": "File pattern to include in the search (e.g. \"*.js\", \"*.{ts,tsx}\")",
+            "type": "string"
+          },
+          "path": {
+            "description": "The directory to search in. Defaults to the current working directory.",
+            "type": "string"
+          },
+          "pattern": {
+            "description": "The regex pattern to search for in file contents",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "grep",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "head_limit": {
+            "description": "Limit output to first N entries. 0 or omitted means no limit.",
+            "type": "number"
+          },
+          "include": {
+            "description": "File pattern to include in the search (e.g. \"*.js\", \"*.{ts,tsx}\")",
+            "type": "string"
+          },
+          "output_mode": {
+            "description": "Output mode: \"content\" shows matching lines, \"files_with_matches\" shows only file paths (default), \"count\" shows match counts per file.",
+            "enum": [
+              "content",
+              "files_with_matches",
+              "count"
+            ],
+            "type": "string"
+          },
+          "path": {
+            "description": "The directory to search in. Defaults to the current working directory.",
+            "type": "string"
+          },
+          "pattern": {
+            "description": "The regex pattern to search for in file contents",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "interactive_bash",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "tmux_command": {
+            "description": "The tmux command to execute (without 'tmux' prefix)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tmux_command"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "invalid",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool",
+          "error"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "look_at",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "file_path": {
+            "description": "Absolute path to the file to analyze",
+            "type": "string"
+          },
+          "file_paths": {
+            "description": "Absolute paths to the files to analyze",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "goal": {
+            "description": "What specific information to extract from the file",
+            "type": "string"
+          },
+          "image_data": {
+            "description": "Base64 encoded image data (for clipboard/pasted images)",
+            "type": "string"
+          },
+          "image_data_list": {
+            "description": "Base64 encoded image data entries (for multiple clipboard/pasted images)",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "goal"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "question",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "questions": {
+            "description": "Questions to ask",
+            "items": {
+              "properties": {
+                "header": {
+                  "description": "Very short label (max 30 chars)",
+                  "type": "string"
+                },
+                "multiple": {
+                  "description": "Allow selecting multiple choices",
+                  "type": "boolean"
+                },
+                "options": {
+                  "description": "Available choices",
+                  "items": {
+                    "properties": {
+                      "description": {
+                        "description": "Explanation of choice",
+                        "type": "string"
+                      },
+                      "label": {
+                        "description": "Display text (1-5 words, concise)",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "label",
+                      "description"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "question": {
+                  "description": "Complete question",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "question",
+                "header",
+                "options"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "questions"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "read",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "filePath": {
+            "description": "The absolute path to the file or directory to read",
+            "type": "string"
+          },
+          "limit": {
+            "description": "The maximum number of lines to read (defaults to 2000)",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "offset": {
+            "description": "The line number to start reading from (1-indexed)",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "filePath"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "session_info",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "session_id": {
+            "description": "Session ID to inspect",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "session_list",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "from_date": {
+            "description": "Filter sessions from this date (ISO 8601 format)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum number of sessions to return",
+            "type": "number"
+          },
+          "project_path": {
+            "description": "Filter sessions by project path (default: current working directory)",
+            "type": "string"
+          },
+          "to_date": {
+            "description": "Filter sessions until this date (ISO 8601 format)",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "id": "session_read",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "from_end": {
+            "description": "Read messages from the END of the session (default: false). Pass true to get the most-recent / final assistant message in the output. Recommended when you want the result of a completed task.",
+            "type": "boolean"
+          },
+          "include_todos": {
+            "description": "Include todo list if available (default: false)",
+            "type": "boolean"
+          },
+          "include_transcript": {
+            "description": "Include transcript log if available (default: false)",
+            "type": "boolean"
+          },
+          "limit": {
+            "description": "Maximum number of messages to return (default: all messages)",
+            "type": "number"
+          },
+          "session_id": {
+            "description": "Session ID to read",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "session_search",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "case_sensitive": {
+            "description": "Case-sensitive search (default: false)",
+            "type": "boolean"
+          },
+          "limit": {
+            "description": "Maximum number of results to return (default: 20)",
+            "type": "number"
+          },
+          "query": {
+            "description": "Search query string",
+            "type": "string"
+          },
+          "session_id": {
+            "description": "Search within specific session only (default: all sessions)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "skill",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "name": {
+            "description": "The name of the skill from available_skills",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "skill",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "name": {
+            "description": "The skill or command name (e.g., 'review-work' or 'publish'). Use without leading slash for commands.",
+            "type": "string"
+          },
+          "user_message": {
+            "description": "Optional arguments or context for command invocation. Example: name='publish', user_message='patch'",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "skill_mcp",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "arguments": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {},
+                "type": "object"
+              }
+            ],
+            "description": "JSON string or object of arguments"
+          },
+          "cdp_url": {
+            "description": "CDP endpoint URL to connect Playwright to an existing browser (e.g. http://localhost:9222). Creates a separate MCP instance per unique URL.",
+            "type": "string"
+          },
+          "grep": {
+            "description": "Regex pattern to filter output lines (only matching lines returned)",
+            "type": "string"
+          },
+          "mcp_name": {
+            "description": "Name of the MCP server from skill config",
+            "type": "string"
+          },
+          "prompt_name": {
+            "description": "MCP prompt to get",
+            "type": "string"
+          },
+          "resource_name": {
+            "description": "MCP resource URI to read",
+            "type": "string"
+          },
+          "tool_name": {
+            "description": "MCP tool to call",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mcp_name"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "task",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "command": {
+            "description": "The command that triggered this task",
+            "type": "string"
+          },
+          "description": {
+            "description": "A short (3-5 words) description of the task",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "The task for the agent to perform",
+            "type": "string"
+          },
+          "subagent_type": {
+            "description": "The type of specialized agent to use for this task",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "This should only be set if you mean to resume a previous task (you can pass a prior task_id and the task will continue the same subagent session as before instead of creating a fresh one)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "prompt",
+          "subagent_type"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "task",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "category": {
+            "description": "REQUIRED if subagent_type not provided. Do NOT provide both category and subagent_type.",
+            "type": "string"
+          },
+          "command": {
+            "description": "The command that triggered this task",
+            "type": "string"
+          },
+          "description": {
+            "description": "Short task description (3-5 words). Auto-generated from prompt if omitted.",
+            "type": "string"
+          },
+          "load_skills": {
+            "description": "Skill names to inject. Optional; defaults to [] when omitted. Pass an explicit array (e.g. [\"git-master\"]) for skill-specific tasks.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "prompt": {
+            "description": "Full detailed prompt for the agent",
+            "type": "string"
+          },
+          "run_in_background": {
+            "description": "true is the standard spawn: returns a background task ID `bg_...` at once; the completion notification delivers the result, which background_output reads. false blocks this response until the child finishes; use it only for a short child whose result gates your very next call. Omitted counts as false.",
+            "type": "boolean"
+          },
+          "subagent_type": {
+            "description": "REQUIRED if category not provided. Do NOT provide both category and subagent_type.",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Continuation session id (`ses_...`) from task metadata; not a background task id (`bg_...`).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "todowrite",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "todos": {
+            "description": "The updated todo list",
+            "items": {
+              "properties": {
+                "content": {
+                  "description": "Brief description of the task",
+                  "type": "string"
+                },
+                "priority": {
+                  "description": "Priority level of the task: high, medium, low",
+                  "type": "string"
+                },
+                "status": {
+                  "description": "Current status of the task: pending, in_progress, completed, cancelled",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content",
+                "status",
+                "priority"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "todos"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "webfetch",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "format": {
+            "default": "markdown",
+            "description": "The format to return the content in (text, markdown, or html). Defaults to markdown.",
+            "enum": [
+              "text",
+              "markdown",
+              "html"
+            ],
+            "type": "string"
+          },
+          "timeout": {
+            "description": "Optional timeout in seconds (max 120)",
+            "type": "number"
+          },
+          "url": {
+            "description": "The URL to fetch content from",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "write",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "content": {
+            "description": "The content to write to the file",
+            "type": "string"
+          },
+          "filePath": {
+            "description": "The absolute path to the file to write (must be absolute, not relative)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content",
+          "filePath"
+        ],
+        "type": "object"
+      }
+    }
+  ]
+}
