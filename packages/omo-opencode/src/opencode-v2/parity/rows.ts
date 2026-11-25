@@ -1,4 +1,4 @@
-import { expect } from "bun:test"
+import { expect } from "./bun-test-shim"
 
 import { LANDED_WAVES } from "./lan"
 import { hBoundRows } from "./rows-h-bound"

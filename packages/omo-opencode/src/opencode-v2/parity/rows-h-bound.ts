@@ -1,4 +1,4 @@
-import { expect, setDefaultTimeout } from "bun:test"
+import { expect, setDefaultTimeout } from "./bun-test-shim"
 
 import { importRuleResults, type ImportRuleId } from "../v2-boundary-imports"
 import { runEntryHashRule, runFileSizeRule, runNamingRule, type BoundaryRuleResult } from "../v2-boundary-rules"

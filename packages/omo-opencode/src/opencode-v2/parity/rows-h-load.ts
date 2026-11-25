@@ -1,4 +1,4 @@
-import { expect } from "bun:test"
+import { expect } from "./bun-test-shim"
 
 import pluginModule from "../../index"
 import { defineGroup, type ParityRow } from "./rows"
