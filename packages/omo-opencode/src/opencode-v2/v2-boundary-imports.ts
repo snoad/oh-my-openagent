@@ -83,7 +83,7 @@ function collectImports(sourceFile: SourceFile): CollectedImport[] {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
       collected.push({
         module: node.moduleSpecifier.text,
-        typeOnly: node.importClause?.isTypeOnly === true,
+        typeOnly: node.importClause?.phaseModifier === ts.SyntaxKind.TypeKeyword,
         line: lineOf(sourceFile, node),
       })
     } else if (ts.isExportDeclaration(node)) {
