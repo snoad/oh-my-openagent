@@ -344,7 +344,11 @@ oqa_v2__self_check() {
   return 1
 }
 
-if [ "${1:-}" = "--self-test" ]; then
+# Direct execution only: when sourced, ${BASH_SOURCE[0]} != $0 and a caller's
+# inherited $1 (e.g. `v2-plugin-probe.sh --self-test`) must NOT fire this
+# guard at source time - it would run the library self-check and exit before
+# the caller's own dispatch.
+if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "${1:-}" = "--self-test" ]; then
   oqa_v2__self_check
   exit $?
 fi
