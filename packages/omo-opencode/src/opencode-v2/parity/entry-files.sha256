@@ -1,0 +1,7 @@
+# sha256 ledger of the OpenCode 2 entry seams (opencode-v2-compat plan, task 6f).
+# Format: one "<sha256>  <path>" line per file (two-space separator, sha256sum compatible),
+# paths relative to packages/omo-opencode/src. A later upstream merge that changes an entry
+# file must update its line consciously in the same change; the H-BOUND-ENTRY-HASHES parity
+# row fails on any drift.
+77d6b81fa31c7f36646c8f2916864abcdee9f3ec6542104365dadd626d59bdbd  index.ts
+ba70c58174414e3b285324da3ba13c6c2302452c66c277499be4b9c902d08e08  tui.ts

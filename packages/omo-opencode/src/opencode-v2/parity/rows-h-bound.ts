@@ -1,8 +1,24 @@
+import { expect, setDefaultTimeout } from "bun:test"
+
+import { importRuleResults, type ImportRuleId } from "../v2-boundary-imports"
+import { runEntryHashRule, runFileSizeRule, runNamingRule, type BoundaryRuleResult } from "../v2-boundary-rules"
 import { defineGroup, type ParityRow } from "./rows"
 
-// Wave-0 boundary rows stay pending with no check until task 6 attaches their
-// checks through V2/v2-boundary.test.ts. The six rows map one-to-one onto the
-// boundary rules (a) to (f) of that todo.
+// Wave-0 boundary rows. The six rows map one-to-one onto the boundary rules
+// (a) to (f) of the opencode-v2-compat plan; each check runs the real rule
+// from v2-boundary-imports.ts / v2-boundary-rules.ts, so the matrix exercises
+// the same assertions as V2/v2-boundary.test.ts. The budget mirrors
+// SRC/shared/prompt-async-route-audit.test.ts for the TypeScript native parse.
+setDefaultTimeout(process.platform === "win32" ? 60_000 : 30_000)
+
+async function expectNoViolations(result: BoundaryRuleResult): Promise<void> {
+  expect(result.violations, `${result.rule} violations`).toEqual([])
+}
+
+async function expectImportRuleClean(ruleId: ImportRuleId): Promise<void> {
+  await expectNoViolations((await importRuleResults())[ruleId])
+}
+
 export const hBoundRows: ParityRow[] = defineGroup("H-BOUND", [
   {
     suffix: "IMPORT-DIRECTION",
@@ -10,6 +26,10 @@ export const hBoundRows: ParityRow[] = defineGroup("H-BOUND", [
     kind: "hermetic",
     is: ["IS-12", "IS-16"],
     wave: 0,
+    status: "checked",
+    check: async () => {
+      await expectImportRuleClean("IMPORT-DIRECTION")
+    },
   },
   {
     suffix: "PLUGIN-RUNTIME-IMPORTS",
@@ -17,6 +37,10 @@ export const hBoundRows: ParityRow[] = defineGroup("H-BOUND", [
     kind: "hermetic",
     is: ["IS-12", "IS-16"],
     wave: 0,
+    status: "checked",
+    check: async () => {
+      await expectImportRuleClean("PLUGIN-RUNTIME-IMPORTS")
+    },
   },
   {
     suffix: "EFFECT-BAN",
@@ -24,6 +48,10 @@ export const hBoundRows: ParityRow[] = defineGroup("H-BOUND", [
     kind: "hermetic",
     is: ["IS-12", "IS-16"],
     wave: 0,
+    status: "checked",
+    check: async () => {
+      await expectImportRuleClean("EFFECT-BAN")
+    },
   },
   {
     suffix: "NAMING",
@@ -31,6 +59,10 @@ export const hBoundRows: ParityRow[] = defineGroup("H-BOUND", [
     kind: "hermetic",
     is: ["IS-12", "IS-16"],
     wave: 0,
+    status: "checked",
+    check: async () => {
+      await expectNoViolations(await runNamingRule())
+    },
   },
   {
     suffix: "FILE-SIZE",
@@ -38,6 +70,10 @@ export const hBoundRows: ParityRow[] = defineGroup("H-BOUND", [
     kind: "hermetic",
     is: ["IS-12", "IS-16"],
     wave: 0,
+    status: "checked",
+    check: async () => {
+      await expectNoViolations(await runFileSizeRule())
+    },
   },
   {
     suffix: "ENTRY-HASHES",
@@ -45,5 +81,9 @@ export const hBoundRows: ParityRow[] = defineGroup("H-BOUND", [
     kind: "hermetic",
     is: ["IS-12", "IS-16"],
     wave: 0,
+    status: "checked",
+    check: async () => {
+      await expectNoViolations(await runEntryHashRule())
+    },
   },
 ])
