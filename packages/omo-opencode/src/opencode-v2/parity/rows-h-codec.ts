@@ -2,7 +2,14 @@ import { expect } from "./bun-test-shim"
 
 import type { SessionMessageInfo } from "@opencode/client"
 import contextAFixture from "./fixtures/host-2.4.1/context-a.json"
-import { fromV1Message, fromV1ToolOutput, toV1Messages, toV1SessionStatus, toV1ToolResult, toV2PromptInput } from "../client/shape-codecs"
+import {
+  fromV1Message,
+  fromV1ToolOutput,
+  toV1Messages,
+  toV1SessionStatus,
+  toV1ToolResult,
+  toV2PromptInput,
+} from "../client/shape-codecs"
 import { defineGroup, type ParityRow } from "./rows"
 
 // Wave-1 shape codec rows. Each check drives the real codec family against the

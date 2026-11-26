@@ -2,10 +2,20 @@ import { beforeEach, describe, expect, test } from "bun:test"
 
 import type { FakeV2Context } from "../parity/fake-v2-context"
 import { createFakeV2Context } from "../parity/fake-v2-context"
-import { captureConsoleLines, createCountingScheduler, createStubV2EngineFactory, runV2ReloadCycles } from "../parity/fake-v2-engine"
+import {
+  captureConsoleLines,
+  createCountingScheduler,
+  createStubV2EngineFactory,
+  runV2ReloadCycles,
+} from "../parity/fake-v2-engine"
 import { createFakeV2SideEffects } from "../parity/fake-v2-side-effects"
 import { startV2Runtime } from "./start-v2-runtime"
-import { activeV2Runtimes, resetV2ProcessStateForTesting, v2ProcessSnapshot, type V2ProcessDepStatus } from "./v2-runtime-deps"
+import {
+  activeV2Runtimes,
+  resetV2ProcessStateForTesting,
+  v2ProcessSnapshot,
+  type V2ProcessDepStatus,
+} from "./v2-runtime-deps"
 
 // startV2Runtime / stopV2Runtime lifecycle (plan task 13): one engine per
 // location, the process-wide dependencies shared through the refcounted
@@ -190,7 +200,11 @@ describe("v2 runtime reload cycles", () => {
     for (const name of ["sweep", "skillSource", "telemetry"] as const) {
       expect(report.snapshot[name], `${name} after the last cycle`).toEqual({ live: 0, started: 3, maxConcurrent: 0 })
     }
-    expect(report.snapshot.openclaw, "openclaw never configured in the scenario").toEqual({ live: 0, started: 0, maxConcurrent: 0 })
+    expect(report.snapshot.openclaw, "openclaw never configured in the scenario").toEqual({
+      live: 0,
+      started: 0,
+      maxConcurrent: 0,
+    })
     expect(sideEffects.tallies.sweepStarts).toBe(3)
     expect(sideEffects.tallies.telemetryCalls).toBe(3)
     expect(sideEffects.tallies.skillSourceStarts).toBe(3)

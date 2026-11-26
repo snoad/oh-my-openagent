@@ -1,7 +1,12 @@
 import { selectRuntimeSecuritySkills } from "../../features/opencode-runtime-skills"
 import { defaultPluginModuleDeps, type PluginModuleDeps } from "../../testing/create-plugin-module"
 import type { V2EngineHooks, V2EngineModule, V2EngineStartInput } from "../runtime/start-v2-runtime"
-import { resetV2ProcessStateForTesting, v2ProcessSnapshot, type V2EngineOverrideDeps, type V2ProcessDepStatus } from "../runtime/v2-runtime-deps"
+import {
+  resetV2ProcessStateForTesting,
+  v2ProcessSnapshot,
+  type V2EngineOverrideDeps,
+  type V2ProcessDepStatus,
+} from "../runtime/v2-runtime-deps"
 import { startV2Runtime } from "../runtime/start-v2-runtime"
 import type { FakeV2Context } from "./fake-v2-context"
 import { createFakeV2Context } from "./fake-v2-context"

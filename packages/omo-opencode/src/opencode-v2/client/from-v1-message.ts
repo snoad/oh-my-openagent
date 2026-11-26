@@ -1,5 +1,11 @@
 import type { FilePart, ToolPart } from "@opencode-ai/sdk"
-import type { V1MessageWithParts, V1Part, V2AssistantContent, V2MessageOut, V2UserFileAttachment } from "./shape-codec-types"
+import type {
+  V1MessageWithParts,
+  V1Part,
+  V2AssistantContent,
+  V2MessageOut,
+  V2UserFileAttachment,
+} from "./shape-codec-types"
 import { assistantTime } from "./to-v1-messages"
 
 export function fromV1Message(message: V1MessageWithParts): V2MessageOut {
@@ -13,7 +19,12 @@ function fromV1User(message: V1MessageWithParts): V2MessageOut {
   for (const part of message.parts) {
     if (part.type === "text") texts.push(part.text)
     else if (part.type === "file") {
-      files.push({ data: "", mime: part.mime, source: { type: "uri", uri: part.url }, ...(part.filename ? { name: part.filename } : {}) })
+      files.push({
+        data: "",
+        mime: part.mime,
+        source: { type: "uri", uri: part.url },
+        ...(part.filename ? { name: part.filename } : {}),
+      })
     } else if (part.type === "agent") agents.push({ name: part.name })
     else throw new Error(`fromV1Message: unknown V1 user message part type "${part.type}" (message ${message.info.id})`)
   }
@@ -46,7 +57,11 @@ function fromV1Assistant(message: V1MessageWithParts): V2MessageOut {
 function assistantContent(part: V1Part, fallbackCreated: number): V2AssistantContent {
   const metadata = partMetadataOf(part)
   if (part.type === "text") {
-    return { type: "text", text: part.text, ...(metadata.native === undefined ? {} : { native: asRecord(metadata.native) }) }
+    return {
+      type: "text",
+      text: part.text,
+      ...(metadata.native === undefined ? {} : { native: asRecord(metadata.native) }),
+    }
   }
   if (part.type === "reasoning") {
     return {
@@ -66,7 +81,11 @@ function partMetadataOf(part: V1Part): { native?: unknown; executed?: unknown; r
     : {}
 }
 
-function toolContent(part: ToolPart, metadata: { native?: unknown; executed?: unknown; ran?: unknown }, fallbackCreated: number): V2AssistantContent {
+function toolContent(
+  part: ToolPart,
+  metadata: { native?: unknown; executed?: unknown; ran?: unknown },
+  fallbackCreated: number,
+): V2AssistantContent {
   const state = v2ToolState(part)
   const v1State = part.state
   const startTime = v1State.status === "pending" ? fallbackCreated : v1State.time.start
@@ -98,10 +117,17 @@ function v2ToolState(tool: ToolPart): Extract<V2AssistantContent, { type: "tool"
       metadata: state.metadata,
     }
   }
-  return { status: "error", input: state.input, error: { type: "error", message: state.error }, metadata: state.metadata }
+  return {
+    status: "error",
+    input: state.input,
+    error: { type: "error", message: state.error },
+    metadata: state.metadata,
+  }
 }
 
-function fileToolContent(attachments: FilePart[] | undefined): { type: "file"; uri: string; mime: string; name?: string | null }[] {
+function fileToolContent(
+  attachments: FilePart[] | undefined,
+): { type: "file"; uri: string; mime: string; name?: string | null }[] {
   return (attachments ?? []).map((file) => ({
     type: "file" as const,
     uri: file.url,

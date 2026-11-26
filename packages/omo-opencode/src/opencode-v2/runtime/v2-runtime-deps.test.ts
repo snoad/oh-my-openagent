@@ -47,7 +47,10 @@ describe("v2 runtime deps DI override object", () => {
 
     // when
     const keys = Object.keys(overrides).sort()
-    const differing = keys.filter((key) => (overrides as Record<string, unknown>)[key] !== (defaultPluginModuleDeps as Record<string, unknown>)[key])
+    const differing = keys.filter(
+      (key) =>
+        (overrides as Record<string, unknown>)[key] !== (defaultPluginModuleDeps as Record<string, unknown>)[key],
+    )
 
     // then
     expect(keys).toEqual(D9_KEYS.slice().sort())

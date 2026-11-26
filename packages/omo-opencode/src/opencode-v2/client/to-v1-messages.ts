@@ -46,7 +46,9 @@ function userPair(entry: V2UserEntry, context: V2ContextInput): V1MessageWithPar
       role: "user",
       time: { created: entry.time.created },
       ...(context.agent === undefined ? {} : { agent: context.agent }),
-      ...(context.model === undefined ? {} : { model: { providerID: context.model.providerID, modelID: context.model.id } }),
+      ...(context.model === undefined
+        ? {}
+        : { model: { providerID: context.model.providerID, modelID: context.model.id } }),
     },
     parts: [text, ...userFileParts(entry, context), ...userAgentParts(entry, context)],
   }
@@ -95,7 +97,12 @@ export function assistantTime(time: V2MessageTime): V2MessageTime {
   return time.completed === undefined ? { created: time.created } : { created: time.created, completed: time.completed }
 }
 
-function assistantPart(part: V2AssistantEntry["content"][number], entry: V2AssistantEntry, index: number, context: V2ContextInput): V1Part {
+function assistantPart(
+  part: V2AssistantEntry["content"][number],
+  entry: V2AssistantEntry,
+  index: number,
+  context: V2ContextInput,
+): V1Part {
   if (part.type === "text") {
     return {
       id: textPartId(part, entry, index),
@@ -118,10 +125,16 @@ function assistantPart(part: V2AssistantEntry["content"][number], entry: V2Assis
     }
   }
   if (part.type === "tool") return toolPart(part, entry, context)
-  throw new Error(`toV1Messages: unknown OpenCode 2 assistant content part type "${(part as { type: string }).type}" (message ${entry.id})`)
+  throw new Error(
+    `toV1Messages: unknown OpenCode 2 assistant content part type "${(part as { type: string }).type}" (message ${entry.id})`,
+  )
 }
 
-function textPartId(part: { native?: { [x: string]: unknown } | null }, entry: V2AssistantEntry, index: number): string {
+function textPartId(
+  part: { native?: { [x: string]: unknown } | null },
+  entry: V2AssistantEntry,
+  index: number,
+): string {
   const itemId = part.native?.itemId
   return typeof itemId === "string" ? itemId : `${entry.id}:text:${index}`
 }
@@ -153,7 +166,8 @@ function toolState(part: V2ToolPart): ToolPart["state"] {
   const start = part.time.created
   const end = part.time.completed ?? part.time.ran ?? part.time.created
   if (state.status === "streaming") return { status: "pending", input: {}, raw: state.input }
-  if (state.status === "running") return { status: "running", input: state.input, metadata: state.metadata, time: { start } }
+  if (state.status === "running")
+    return { status: "running", input: state.input, metadata: state.metadata, time: { start } }
   if (state.status === "completed") {
     return {
       status: "completed",
@@ -164,7 +178,13 @@ function toolState(part: V2ToolPart): ToolPart["state"] {
       time: { start, end },
     }
   }
-  return { status: "error", input: state.input, error: state.error.message, metadata: state.metadata, time: { start, end } }
+  return {
+    status: "error",
+    input: state.input,
+    error: state.error.message,
+    metadata: state.metadata,
+    time: { start, end },
+  }
 }
 
 function joinedTextOutput(content: ReadonlyArray<{ type: string; text?: string }>): string {

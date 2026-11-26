@@ -9,17 +9,13 @@ import { recordPluginTelemetry } from "../../shared/posthog"
 import { sweepOmoFamiliesBestEffort } from "../../shared/omo-process-sweep"
 import { createV2PluginDetectors, type V2ListedPlugin } from "./v2-plugin-identity"
 
-// The D-9 DI override object and the process-wide state of the OpenCode 2
-// runtime (plan task 13). The override object neutralizes the V1 host-owned
-// side effects, re-implements the plugin detectors over the listed OpenCode 2
-// plugins, always disables the auto-update-checker hook (the host updates
-// version-following plugins itself, LIM-18) and wraps the process-wide
-// side effects in ONE refcounted record per process so a host with one plugin
-// instance per location still runs one sweep, one openclaw listener, one
-// runtime skill source server and one telemetry ping, released only after the
-// last runtime stops. The engine log is mirrored to the plugin console: the
-// OpenCode 2 host routes plugin console output into the serve log, which is
-// the only host-visible channel for the engine's startup markers.
+// The D-9 DI override object and the process-wide state of the OpenCode 2 runtime (plan task 13). The override
+// neutralizes the V1 host-owned side effects, re-implements the plugin detectors over the listed OpenCode 2
+// plugins, always disables the auto-update-checker hook (the host updates version-following plugins itself,
+// LIM-18) and wraps the process-wide side effects in ONE refcounted record per process: one sweep, one openclaw
+// listener, one runtime skill source server and one telemetry ping, released only after the last runtime stops.
+// The engine log is mirrored to the plugin console: the OpenCode 2 host routes plugin console output into the
+// serve log, the only host-visible channel for the engine's startup markers.
 
 export type V2EngineSideEffects = {
   readonly startOmoProcessSweep: () => Promise<void>
@@ -39,7 +35,8 @@ export const defaultV2EngineSideEffects: V2EngineSideEffects = {
   loadConfigChain: validatePluginConfig,
 }
 
-export type V2ProcessDepName = "sweep" | "openclaw" | "skillSource" | "telemetry"
+const PROCESS_DEP_NAMES = ["sweep", "openclaw", "skillSource", "telemetry"] as const
+export type V2ProcessDepName = (typeof PROCESS_DEP_NAMES)[number]
 
 export type V2ProcessDepStatus = { readonly live: number; readonly started: number; readonly maxConcurrent: number }
 
@@ -51,14 +48,23 @@ export type V2RuntimeTracker = {
 }
 
 export type V2EngineOverrideKey =
-  | "installAgentSortShim" | "injectServerAuthIntoClient" | "initLiveServerRoute"
-  | "setLiveParentWakeRoutingDisabled" | "warmLiveServerProbe" | "ensureTuiPluginEntry"
-  | "detectDuplicateOmoPlugin" | "detectExternalSkillPlugin" | "loadConfigChain"
-  | "startOmoProcessSweep" | "initializeOpenClaw" | "createRuntimeSkillSourceServer"
-  | "recordPluginTelemetry" | "runOpenCodeStartupMigration" | "log"
+  | "installAgentSortShim"
+  | "injectServerAuthIntoClient"
+  | "initLiveServerRoute"
+  | "setLiveParentWakeRoutingDisabled"
+  | "warmLiveServerProbe"
+  | "ensureTuiPluginEntry"
+  | "detectDuplicateOmoPlugin"
+  | "detectExternalSkillPlugin"
+  | "loadConfigChain"
+  | "startOmoProcessSweep"
+  | "initializeOpenClaw"
+  | "createRuntimeSkillSourceServer"
+  | "recordPluginTelemetry"
+  | "runOpenCodeStartupMigration"
+  | "log"
 
-// Object.assign derives this required-Pick view without a cast: the D-9 keys
-// stay required through the intersection with Partial.
+// Object.assign derives this required-Pick view without a cast: the D-9 keys stay required via the Partial intersection.
 export type V2EngineOverrideDeps = Pick<PluginModuleDeps, V2EngineOverrideKey> & Partial<PluginModuleDeps>
 
 type V2ProcessRecord = {
@@ -94,9 +100,7 @@ export function releaseV2ProcessDep(name: V2ProcessDepName): Promise<void> {
   if (record.refCount === 0) {
     record.release = (async () => {
       for (const disposer of record.disposers) await disposer()
-    })().finally(() => {
-      processRecords.delete(name)
-    })
+    })().finally(() => processRecords.delete(name))
   }
   return record.release ?? Promise.resolve()
 }
@@ -108,15 +112,13 @@ function depStatus(name: V2ProcessDepName): V2ProcessDepStatus {
 }
 
 export function v2ProcessSnapshot(): Record<V2ProcessDepName, V2ProcessDepStatus> {
-  return { sweep: depStatus("sweep"), openclaw: depStatus("openclaw"), skillSource: depStatus("skillSource"), telemetry: depStatus("telemetry") }
+  type Snapshot = Record<V2ProcessDepName, V2ProcessDepStatus>
+  return Object.fromEntries(PROCESS_DEP_NAMES.map((name) => [name, depStatus(name)])) as Snapshot
 }
 
 export function resetV2ProcessStateForTesting(): void {
   processRecords.clear()
-  startedCounts.sweep = 0
-  startedCounts.openclaw = 0
-  startedCounts.skillSource = 0
-  startedCounts.telemetry = 0
+  for (const name of PROCESS_DEP_NAMES) startedCounts[name] = 0
   startupMigrations.clear()
   activeV2Runtimes.clear()
 }
@@ -147,7 +149,8 @@ export function createRuntimeDeps(
     ensureTuiPluginEntry: () => ({ changed: false, reason: "opencode-2 host owns the tui plugin entry" }),
     detectDuplicateOmoPlugin: detectors.detectDuplicateOmoPlugin,
     detectExternalSkillPlugin: detectors.detectExternalSkillPlugin,
-    loadConfigChain: (directory, environment) => withAutoUpdateCheckerDisabled(sideEffects.loadConfigChain(directory, environment)),
+    loadConfigChain: (directory, environment) =>
+      withAutoUpdateCheckerDisabled(sideEffects.loadConfigChain(directory, environment)),
     log: (message: string, data?: unknown) => {
       defaultEngineLog(message, data)
       console.log(message)
@@ -188,9 +191,7 @@ export function createRuntimeDeps(
       return {
         url: server.url,
         fetch: (request: Request) => server.fetch(request),
-        stop: () => {
-          void release()
-        },
+        stop: () => void release(),
       }
     },
   }

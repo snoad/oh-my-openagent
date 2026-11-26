@@ -95,10 +95,14 @@ export async function runEntryHashRule(): Promise<BoundaryRuleResult> {
     const relativePath = separator === -1 ? "" : line.slice(separator + 2).trim()
     const entryPath = path.join(SRC_ROOT, relativePath)
     if (recorded.length !== 64 || relativePath.length === 0 || !existsSync(entryPath)) {
-      violations.push(`opencode-v2/parity/entry-files.sha256 rule ENTRY-HASHES: malformed or missing ledger entry "${line}"`)
+      violations.push(
+        `opencode-v2/parity/entry-files.sha256 rule ENTRY-HASHES: malformed or missing ledger entry "${line}"`,
+      )
       continue
     }
-    const actual = createHash("sha256").update(await readFile(entryPath)).digest("hex")
+    const actual = createHash("sha256")
+      .update(await readFile(entryPath))
+      .digest("hex")
     if (actual !== recorded) {
       violations.push(`${relativePath} rule ENTRY-HASHES: sha256 ${actual} does not match the recorded ${recorded}`)
     }

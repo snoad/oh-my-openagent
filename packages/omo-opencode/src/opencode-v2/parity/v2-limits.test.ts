@@ -28,10 +28,7 @@ function resolveApiEvidence(limit: V2Limit): void {
   ).toBe(true)
   expect(fragment.length, `${limit.id} apiEvidence has an empty member or line range`).toBeGreaterThan(0)
   const absolutePath = join(pluginDistRoot(), relativePath)
-  expect(
-    existsSync(absolutePath),
-    `${limit.id} apiEvidence does not resolve under @opencode/plugin/dist`,
-  ).toBe(true)
+  expect(existsSync(absolutePath), `${limit.id} apiEvidence does not resolve under @opencode/plugin/dist`).toBe(true)
   const content = readFileSync(absolutePath, "utf8")
   const lineRange = fragment.match(/^L?(\d+)(?:-L?(\d+))?$/)
   if (lineRange) {
@@ -44,10 +41,7 @@ function resolveApiEvidence(limit: V2Limit): void {
     ).toBe(true)
     return
   }
-  expect(
-    content.includes(fragment),
-    `${limit.id} apiEvidence member is not declared in ${relativePath}`,
-  ).toBe(true)
+  expect(content.includes(fragment), `${limit.id} apiEvidence member is not declared in ${relativePath}`).toBe(true)
 }
 
 describe("OpenCode 2 limits ledger", () => {
@@ -59,9 +53,7 @@ describe("OpenCode 2 limits ledger", () => {
     for (const limit of confirmed) {
       expect(limit.apiEvidence, `${limit.id} is confirmed without apiEvidence`).toBeDefined()
       resolveApiEvidence(limit)
-      expect(typeof limit.gracefulCheck, `${limit.id} is confirmed without a graceful check`).toBe(
-        "function",
-      )
+      expect(typeof limit.gracefulCheck, `${limit.id} is confirmed without a graceful check`).toBe("function")
       await limit.gracefulCheck?.()
     }
   })
@@ -80,10 +72,7 @@ describe("OpenCode 2 limits ledger", () => {
     // when / then
     for (const limit of V2_LIMITS) {
       const mappedToAllowed = limit.is.some((isId) => limitAllowedIs.has(isId))
-      expect(
-        mappedToAllowed,
-        `${limit.id} uses the limit path outside IS-4, IS-9 and IS-13`,
-      ).toBe(true)
+      expect(mappedToAllowed, `${limit.id} uses the limit path outside IS-4, IS-9 and IS-13`).toBe(true)
     }
   })
 

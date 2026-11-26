@@ -9,7 +9,10 @@ import type { V2RuntimePluginContext } from "./start-v2-runtime"
 
 export type V2AdapterRegistration = {
   readonly id: string
-  readonly register: (input: { readonly ctx: V2RuntimePluginContext; readonly runtime: V2Runtime }) => void | Promise<void>
+  readonly register: (input: {
+    readonly ctx: V2RuntimePluginContext
+    readonly runtime: V2Runtime
+  }) => void | Promise<void>
 }
 
 export const v2AdapterRegistrations: readonly V2AdapterRegistration[] = []

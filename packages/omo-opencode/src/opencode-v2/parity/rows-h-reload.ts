@@ -4,7 +4,13 @@ import { createFakeV2Context, type FakeV2Context } from "./fake-v2-context"
 import { createCountingScheduler, createStubV2EngineFactory, runV2ReloadCycles } from "./fake-v2-engine"
 import { createFakeV2SideEffects } from "./fake-v2-side-effects"
 import { startV2Runtime } from "../runtime/start-v2-runtime"
-import { activeV2Runtimes, resetV2ProcessStateForTesting, v2ProcessSnapshot, type V2ProcessDepName, type V2ProcessDepStatus } from "../runtime/v2-runtime-deps"
+import {
+  activeV2Runtimes,
+  resetV2ProcessStateForTesting,
+  v2ProcessSnapshot,
+  type V2ProcessDepName,
+  type V2ProcessDepStatus,
+} from "../runtime/v2-runtime-deps"
 import { defineGroup, type ParityRow, type ParityRowGroupItem } from "./rows"
 
 // Wave-1 H-RELOAD rows (plan task 13): the reload lifecycle of the OpenCode 2
@@ -63,7 +69,11 @@ async function checkReloadCyclesEndClean(): Promise<void> {
   for (const name of ["sweep", "skillSource", "telemetry"] as const) {
     expect(report.snapshot[name], `${name} after the last cycle`).toEqual({ live: 0, started: 2, maxConcurrent: 0 })
   }
-  expect(report.snapshot.openclaw, "openclaw never configured in the scenario").toEqual({ live: 0, started: 0, maxConcurrent: 0 })
+  expect(report.snapshot.openclaw, "openclaw never configured in the scenario").toEqual({
+    live: 0,
+    started: 0,
+    maxConcurrent: 0,
+  })
   expect(sideEffects.tallies.migrationCwds, "migration once per location").toEqual(["/tmp/fake-v2"])
   expect(activeV2Runtimes.size).toBe(0)
 }
@@ -97,8 +107,24 @@ async function checkDoubleCleanupDisposesOnce(): Promise<void> {
 }
 
 export const hReloadRows: ParityRow[] = defineGroup("H-RELOAD", [
-  row("TWO-LOCATIONS", "two locations start two engines over the shared process-wide dependencies and stopping one keeps them live", checkTwoLocationsShareSingletons),
-  row("CYCLES-END-CLEAN", "N setup and cleanup cycles end with zero live process-wide deps and zero pending timers, subscriptions and registrations", checkReloadCyclesEndClean),
-  row("SAME-LOCATION-RELOAD", "a second setup for the same location stops the previous runtime first", checkSameLocationReloadStopsPrevious),
-  row("DOUBLE-CLEANUP", "a cleanup called twice disposes the engine exactly once without error", checkDoubleCleanupDisposesOnce),
+  row(
+    "TWO-LOCATIONS",
+    "two locations start two engines over the shared process-wide dependencies and stopping one keeps them live",
+    checkTwoLocationsShareSingletons,
+  ),
+  row(
+    "CYCLES-END-CLEAN",
+    "N setup and cleanup cycles end with zero live process-wide deps and zero pending timers, subscriptions and registrations",
+    checkReloadCyclesEndClean,
+  ),
+  row(
+    "SAME-LOCATION-RELOAD",
+    "a second setup for the same location stops the previous runtime first",
+    checkSameLocationReloadStopsPrevious,
+  ),
+  row(
+    "DOUBLE-CLEANUP",
+    "a cleanup called twice disposes the engine exactly once without error",
+    checkDoubleCleanupDisposesOnce,
+  ),
 ])

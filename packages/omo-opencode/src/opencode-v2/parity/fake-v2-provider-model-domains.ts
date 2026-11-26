@@ -1,11 +1,14 @@
-// Provider and model editor domains for the fake OpenCode 2 plugin context,
-// task 9 of the opencode-v2-compat plan. Local structural mirrors of the
-// pinned node_modules/@opencode/plugin 2.4.1 declarations: the provider editor
-// owns the provider records (with their model maps), the model editor owns
-// model overrides and the default selection, and its provider view reads the
-// same records before model transforms, mirroring ModelEditor.provider.
+// Provider and model editor domains for the fake OpenCode 2 plugin context, task 9 of the opencode-v2-compat
+// plan. Local structural mirrors of the pinned node_modules/@opencode/plugin 2.4.1 declarations: the provider
+// editor owns the provider records (with their model maps), the model editor owns model overrides and the
+// default selection, and its provider view reads the same records before model transforms (ModelEditor.provider).
 
-import { registerEditorTransform, type FakeEditorDomainResult, type FakeListEnvelope, type FakeLocationRef } from "./fake-v2-editors"
+import {
+  registerEditorTransform,
+  type FakeEditorDomainResult,
+  type FakeListEnvelope,
+  type FakeLocationRef,
+} from "./fake-v2-editors"
 import type { FakeHookRegistry, FakeRegistration } from "./fake-v2-registry"
 
 export type FakeProviderInfo = { id: string; name: string; [key: string]: unknown }
@@ -21,7 +24,11 @@ export type FakeProviderRecord = {
 export type FakeProviderEditor = {
   list(): FakeProviderRecord[]
   get(providerID: string): FakeProviderRecord | undefined
-  add(record: { info: FakeProviderInfo; models: ReadonlyArray<FakeModelInfo>; sourceConnection?: Record<string, unknown> }): void
+  add(record: {
+    info: FakeProviderInfo
+    models: ReadonlyArray<FakeModelInfo>
+    sourceConnection?: Record<string, unknown>
+  }): void
   update(providerID: string, update: (provider: FakeProviderInfo) => void): void
   remove(providerID: string): void
   readonly models: {
@@ -47,21 +54,19 @@ export type FakeModelEditor = {
     get(): { providerID: string; modelID: string } | undefined
     set(providerID: string, modelID: string): void
   }
-  readonly provider: {
-    list(): FakeProviderRecord[]
-    get(providerID: string): FakeProviderRecord | undefined
-  }
+  readonly provider: { list(): FakeProviderRecord[]; get(providerID: string): FakeProviderRecord | undefined }
 }
 
 export interface FakeModelDomain {
   list(input?: { readonly location?: { readonly directory?: string } }): Promise<FakeListEnvelope<FakeModelInfo>>
-  default(input?: { readonly location?: { readonly directory?: string } }): Promise<{ readonly location: FakeLocationRef; readonly data: FakeModelInfo | null }>
+  default(input?: {
+    readonly location?: { readonly directory?: string }
+  }): Promise<{ readonly location: FakeLocationRef; readonly data: FakeModelInfo | null }>
   transform(callback: (editor: FakeModelEditor) => void): Promise<FakeRegistration>
   reload(): Promise<void>
 }
 
-// Store record twin of FakeProviderRecord with a mutable model map the editor
-// mutations write through; the public mirror stays ReadonlyMap.
+// Store twin of FakeProviderRecord: mutable model map the editor writes through; the public mirror stays ReadonlyMap.
 type ProviderStoreRecord = {
   provider: FakeProviderInfo
   models: Map<string, FakeModelInfo>
@@ -117,12 +122,15 @@ function createModelEditor(stores: ProviderStores): FakeModelEditor {
     list: (providerID?: string) =>
       providerID === undefined
         ? [...stores.models]
-        : [...stores.records.get(providerID)?.models.values() ?? [], ...stores.models.filter((m) => m.providerID === providerID)],
+        : [
+            ...(stores.records.get(providerID)?.models.values() ?? []),
+            ...stores.models.filter((m) => m.providerID === providerID),
+          ],
     get: (providerID, modelID) =>
       stores.models.find((model) => model.providerID === providerID && model.modelID === modelID) ??
       stores.records.get(providerID)?.models.get(modelID),
     update: (providerID, modelID, update) => {
-      const model = stores.models.find((candidate) => candidate.providerID === providerID && candidate.modelID === modelID)
+      const model = stores.models.find((c) => c.providerID === providerID && c.modelID === modelID)
       if (model) update(model)
     },
     remove: (providerID, modelID) => {
@@ -152,7 +160,10 @@ export function createProviderModelDomains(input: {
   const live = createProviderStores()
   const providerDomain: FakeProviderDomain = {
     async list() {
-      return { location: { directory: input.directory }, data: [...live.records.values()].map((record) => record.provider) }
+      return {
+        location: { directory: input.directory },
+        data: [...live.records.values()].map((record) => record.provider),
+      }
     },
     async get(getInput) {
       const record = live.records.get(getInput.providerID)

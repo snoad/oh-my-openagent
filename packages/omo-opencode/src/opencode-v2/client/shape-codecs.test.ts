@@ -108,14 +108,7 @@ describe("toV1Messages", () => {
 
     // then
     const textPart = textMessages[1]?.parts[0]
-    expect(Object.keys(textPart ?? {}).sort()).toEqual([
-      "id",
-      "messageID",
-      "metadata",
-      "sessionID",
-      "text",
-      "type",
-    ])
+    expect(Object.keys(textPart ?? {}).sort()).toEqual(["id", "messageID", "metadata", "sessionID", "text", "type"])
     const assistant = messages[1]
     expect(assistant?.parts.length).toBe(1)
     const toolPart = assistant?.parts[0] as { state: object }
@@ -129,14 +122,7 @@ describe("toV1Messages", () => {
       "tool",
       "type",
     ])
-    expect(Object.keys(toolPart.state ?? {}).sort()).toEqual([
-      "input",
-      "metadata",
-      "output",
-      "status",
-      "time",
-      "title",
-    ])
+    expect(Object.keys(toolPart.state ?? {}).sort()).toEqual(["input", "metadata", "output", "status", "time", "title"])
   })
 
   it("maps user and assistant text verbatim", () => {
@@ -148,7 +134,9 @@ describe("toV1Messages", () => {
 
     // then
     expect((messages[0]?.parts[0] as { text: string }).text).toBe("Reply with exactly: A_FINAL")
-    expect((messages[1]?.parts[0] as { text: string }).text).toBe(host[1] && (host[1] as { content: [{ text: string }] }).content[0].text)
+    expect((messages[1]?.parts[0] as { text: string }).text).toBe(
+      host[1] && (host[1] as { content: [{ text: string }] }).content[0].text,
+    )
   })
 
   it("maps the context-b read tool call to a completed V1 tool state", () => {
@@ -173,7 +161,9 @@ describe("toV1Messages", () => {
     expect(toolPart.tool).toBe("read")
     expect(toolPart.state.status).toBe("completed")
     expect(toolPart.state.input).toEqual({ path: "/tmp/oqa-v2-capture.xrswdN/proj/capture-b.txt" })
-    expect(toolPart.state.output).toBe("Read file /tmp/oqa-v2-capture.xrswdN/proj/capture-b.txt, lines 1-1\n1: hello v2 capture")
+    expect(toolPart.state.output).toBe(
+      "Read file /tmp/oqa-v2-capture.xrswdN/proj/capture-b.txt, lines 1-1\n1: hello v2 capture",
+    )
     expect(toolPart.state.title).toBe("read")
     expect(toolPart.state.metadata).toEqual({ truncated: false })
     expect(toolPart.state.time).toEqual({ start: 1795585963898, end: 1795585963913 })
@@ -259,8 +249,8 @@ describe("fromV1Message round trip", () => {
       const messages = toV1Messages({ sessionID: SESSION_ID, data: entries })
 
       // when
-      const reconverted = messages.map((message) =>
-        toV1Messages({ sessionID: SESSION_ID, messages: [fromV1Message(message)] })[0],
+      const reconverted = messages.map(
+        (message) => toV1Messages({ sessionID: SESSION_ID, messages: [fromV1Message(message)] })[0],
       )
 
       // then

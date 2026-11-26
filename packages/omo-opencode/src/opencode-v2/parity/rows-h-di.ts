@@ -50,7 +50,9 @@ function row(suffix: string, title: string, check: () => void | Promise<void>): 
 function checkKeysExact(): void {
   const overrides = freshOverrides()
   const keys = Object.keys(overrides).sort()
-  const differing = keys.filter((key) => (overrides as Record<string, unknown>)[key] !== (defaultPluginModuleDeps as Record<string, unknown>)[key])
+  const differing = keys.filter(
+    (key) => (overrides as Record<string, unknown>)[key] !== (defaultPluginModuleDeps as Record<string, unknown>)[key],
+  )
   expect(keys, "override keys").toEqual(D9_KEYS.slice().sort())
   expect(differing, "keys differing from the defaults").toEqual(D9_KEYS.slice().sort())
 }
@@ -58,7 +60,9 @@ function checkKeysExact(): void {
 function checkDepDiffers(key: string): () => void {
   return () => {
     const overrides = freshOverrides()
-    expect((overrides as Record<string, unknown>)[key], `${key} override`).not.toBe((defaultPluginModuleDeps as Record<string, unknown>)[key])
+    expect((overrides as Record<string, unknown>)[key], `${key} override`).not.toBe(
+      (defaultPluginModuleDeps as Record<string, unknown>)[key],
+    )
   }
 }
 
@@ -80,7 +84,10 @@ async function checkSortShimUntouchedAfterStart(): Promise<void> {
 
 function checkTuiEntryNoop(): void {
   const overrides = freshOverrides()
-  expect(overrides.ensureTuiPluginEntry()).toEqual({ changed: false, reason: "opencode-2 host owns the tui plugin entry" })
+  expect(overrides.ensureTuiPluginEntry()).toEqual({
+    changed: false,
+    reason: "opencode-2 host owns the tui plugin entry",
+  })
 }
 
 function checkDuplicateDetector(): void {
@@ -98,7 +105,10 @@ function checkDuplicateDetector(): void {
 }
 
 function checkSkillPluginDetector(): void {
-  const overrides = freshOverrides([...ONE_OMO_SOURCE, { id: "opencode-skills", source: { type: "package", target: "opencode-skills" } }])
+  const overrides = freshOverrides([
+    ...ONE_OMO_SOURCE,
+    { id: "opencode-skills", source: { type: "package", target: "opencode-skills" } },
+  ])
   const result = overrides.detectExternalSkillPlugin("/tmp/fake-v2")
   expect(result.detected).toBe(true)
   expect(result.pluginName).toBe("opencode-skills")
@@ -149,17 +159,37 @@ export const hDiRows: ParityRow[] = defineGroup("H-DI", [
   row("AGENT-SORT-SHIM", "installAgentSortShim is overridden", checkDepDiffers("installAgentSortShim")),
   row("SERVER-AUTH", "injectServerAuthIntoClient is overridden", checkDepDiffers("injectServerAuthIntoClient")),
   row("LIVE-ROUTE", "initLiveServerRoute is overridden", checkDepDiffers("initLiveServerRoute")),
-  row("PARENT-WAKE-ROUTING", "setLiveParentWakeRoutingDisabled is overridden", checkDepDiffers("setLiveParentWakeRoutingDisabled")),
+  row(
+    "PARENT-WAKE-ROUTING",
+    "setLiveParentWakeRoutingDisabled is overridden",
+    checkDepDiffers("setLiveParentWakeRoutingDisabled"),
+  ),
   row("LIVE-PROBE", "warmLiveServerProbe is overridden", checkDepDiffers("warmLiveServerProbe")),
   row("TUI-PLUGIN-ENTRY", "ensureTuiPluginEntry is a no-op reporting the host owns the tui entry", checkTuiEntryNoop),
   row("DUPLICATE-DETECT", "detectDuplicateOmoPlugin counts listed omo plugin sources", checkDuplicateDetector),
-  row("SKILL-PLUGIN-DETECT", "detectExternalSkillPlugin keeps the V1 name list over the listed plugins", checkSkillPluginDetector),
-  row("CONFIG-CHAIN", "loadConfigChain always disables the auto-update-checker hook on OpenCode 2", checkConfigChainWrap),
+  row(
+    "SKILL-PLUGIN-DETECT",
+    "detectExternalSkillPlugin keeps the V1 name list over the listed plugins",
+    checkSkillPluginDetector,
+  ),
+  row(
+    "CONFIG-CHAIN",
+    "loadConfigChain always disables the auto-update-checker hook on OpenCode 2",
+    checkConfigChainWrap,
+  ),
   row("PROCESS-SWEEP", "startOmoProcessSweep is refcounted per process", checkDepDiffers("startOmoProcessSweep")),
   row("OPENCLAW", "initializeOpenClaw is refcounted per process", checkDepDiffers("initializeOpenClaw")),
-  row("SKILL-SOURCE-SERVER", "createRuntimeSkillSourceServer hands out per-engine handles of one shared server", checkSkillSourceHandle),
+  row(
+    "SKILL-SOURCE-SERVER",
+    "createRuntimeSkillSourceServer hands out per-engine handles of one shared server",
+    checkSkillSourceHandle,
+  ),
   row("TELEMETRY", "recordPluginTelemetry is refcounted per process", checkDepDiffers("recordPluginTelemetry")),
   row("STARTUP-MIGRATION", "runOpenCodeStartupMigration runs once per location through the memo", checkMigrationMemo),
   row("LOG", "log mirrors engine log lines to the plugin console", checkLogMirror),
-  row("TOSORTED", "a full runtime start leaves Array.prototype.toSorted untouched and mirrors the V1 entry line", checkSortShimUntouchedAfterStart),
+  row(
+    "TOSORTED",
+    "a full runtime start leaves Array.prototype.toSorted untouched and mirrors the V1 entry line",
+    checkSortShimUntouchedAfterStart,
+  ),
 ])

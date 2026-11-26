@@ -128,7 +128,14 @@ describe("v2 client shim session methods", () => {
     if (record === undefined) throw new Error(`unknown session ${sessionID}`)
     ;(record.context as SessionMessageInfo[]).push(
       { id: "msg_user", type: "user", time: { created: 1 }, text: "question", files: [] },
-      { id: "msg_reply", type: "assistant", agent: "build", model: { id: "m", providerID: "p" }, content: [{ type: "text", text: "answer" }], time: { created: 2, completed: 3 } },
+      {
+        id: "msg_reply",
+        type: "assistant",
+        agent: "build",
+        model: { id: "m", providerID: "p" },
+        content: [{ type: "text", text: "answer" }],
+        time: { created: 2, completed: 3 },
+      },
     )
 
     // when
@@ -215,7 +222,14 @@ describe("v2 client shim session lifecycle methods", () => {
         ...ctx.session,
         compact: async (input: { sessionID: string }) => {
           compactCalls.push({ sessionID: input.sessionID })
-          return { id: "inb_compact", sessionID: input.sessionID, time: { created: 1 }, type: "compaction", payload: {}, delivery: "steer" }
+          return {
+            id: "inb_compact",
+            sessionID: input.sessionID,
+            time: { created: 1 },
+            type: "compaction",
+            payload: {},
+            delivery: "steer",
+          }
         },
       },
     })
@@ -340,4 +354,3 @@ describe("v2 client shim session lifecycle methods", () => {
     expect(result.data).toEqual([])
   })
 })
-

@@ -162,8 +162,7 @@ export const hFakeRows: ParityRow[] = defineGroup("H-FAKE", [
   },
   {
     suffix: "PROMPT-HOOK-TAG",
-    title:
-      "the fake session.prompt fires the prompt hook unless the admission carries the omo.internal tag",
+    title: "the fake session.prompt fires the prompt hook unless the admission carries the omo.internal tag",
     kind: "hermetic",
     is: ["IS-13"],
     wave: 1,

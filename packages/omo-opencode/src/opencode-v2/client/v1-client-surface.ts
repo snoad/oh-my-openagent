@@ -61,8 +61,7 @@ type V1ResponseOf<TResponses> = TResponses[keyof TResponses]
 type V1ErrorOf<TErrors> = TErrors[keyof TErrors]
 
 export type V1Envelope<TData, TError = never> = (
-  | { readonly data: TData; readonly error: undefined }
-  | { readonly data: undefined; readonly error: TError }
+  { readonly data: TData; readonly error: undefined } | { readonly data: undefined; readonly error: TError }
 ) & { readonly request: Request; readonly response: Response }
 
 export type V1FieldsResult<TResponses, TErrors = Record<never, never>> = Promise<
@@ -91,22 +90,32 @@ export function v1NotFound(message: string, route: string): V1Envelope<never, No
 }
 
 export type V1SessionShimSurface = {
-  readonly promptAsync: (options: OmitUrl<SessionPromptAsyncData>) => V1FieldsResult<SessionPromptAsyncResponses, SessionPromptAsyncErrors>
+  readonly promptAsync: (
+    options: OmitUrl<SessionPromptAsyncData>,
+  ) => V1FieldsResult<SessionPromptAsyncResponses, SessionPromptAsyncErrors>
   // The V1 options chain extends RequestInit, so the sync prompt accepts the
   // standard abort signal; the shim honors it by interrupting the session.
   readonly prompt: (
     options: OmitUrl<SessionPromptData> & { readonly signal?: AbortSignal | null },
   ) => Promise<V1Envelope<V1MessageWithParts, V1ErrorOf<SessionPromptErrors>>>
-  readonly messages: (options: OmitUrl<SessionMessagesData>) => Promise<V1Envelope<V1MessageWithParts[], V1ErrorOf<SessionMessagesErrors>>>
+  readonly messages: (
+    options: OmitUrl<SessionMessagesData>,
+  ) => Promise<V1Envelope<V1MessageWithParts[], V1ErrorOf<SessionMessagesErrors>>>
   readonly status: () => V1FieldsResult<SessionStatusResponses, SessionStatusErrors>
-  readonly message: (options: OmitUrl<SessionMessageData>) => Promise<V1Envelope<V1MessageWithParts, V1ErrorOf<SessionMessageErrors>>>
+  readonly message: (
+    options: OmitUrl<SessionMessageData>,
+  ) => Promise<V1Envelope<V1MessageWithParts, V1ErrorOf<SessionMessageErrors>>>
   readonly abort: (options: OmitUrl<SessionAbortData>) => V1FieldsResult<SessionAbortResponses, SessionAbortErrors>
-  readonly summarize: (options: OmitUrl<SessionSummarizeData>) => V1FieldsResult<SessionSummarizeResponses, SessionSummarizeErrors>
+  readonly summarize: (
+    options: OmitUrl<SessionSummarizeData>,
+  ) => V1FieldsResult<SessionSummarizeResponses, SessionSummarizeErrors>
   readonly create: (options?: OmitUrl<SessionCreateData>) => V1FieldsResult<SessionCreateResponses, SessionCreateErrors>
   readonly list: (options?: OmitUrl<SessionListData>) => V1FieldsResult<SessionListResponses>
   readonly delete: (options: OmitUrl<SessionDeleteData>) => V1FieldsResult<SessionDeleteResponses, SessionDeleteErrors>
   readonly get: (options: OmitUrl<SessionGetData>) => V1FieldsResult<SessionGetResponses, SessionGetErrors>
-  readonly children: (options: OmitUrl<SessionChildrenData>) => V1FieldsResult<SessionChildrenResponses, SessionChildrenErrors>
+  readonly children: (
+    options: OmitUrl<SessionChildrenData>,
+  ) => V1FieldsResult<SessionChildrenResponses, SessionChildrenErrors>
   readonly todo: (options: OmitUrl<SessionTodoData>) => V1FieldsResult<SessionTodoResponses>
 }
 

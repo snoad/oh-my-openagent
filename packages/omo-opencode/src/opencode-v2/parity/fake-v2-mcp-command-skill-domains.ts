@@ -5,7 +5,12 @@
 // without the schema runtime). MCP is keyed by server name; the command editor
 // is add-only like the SDK CommandEditor; the skill editor is keyed by id.
 
-import { createKeyedEditor, registerEditorTransform, type FakeEditorDomainResult, type FakeListEnvelope } from "./fake-v2-editors"
+import {
+  createKeyedEditor,
+  registerEditorTransform,
+  type FakeEditorDomainResult,
+  type FakeListEnvelope,
+} from "./fake-v2-editors"
 import type { FakeHookRegistry, FakeRegistration } from "./fake-v2-registry"
 
 type KeyedEditor = ReturnType<typeof createKeyedEditor<FakeSkillInfo>>
@@ -37,7 +42,9 @@ export type FakeCommandEditor = {
 }
 
 export interface FakeCommandDomain {
-  list(input?: { readonly location?: { readonly directory?: string } }): Promise<FakeListEnvelope<FakeCommandDefinition>>
+  list(input?: {
+    readonly location?: { readonly directory?: string }
+  }): Promise<FakeListEnvelope<FakeCommandDefinition>>
   transform(callback: (editor: FakeCommandEditor) => void): Promise<FakeRegistration>
   reload(): Promise<void>
 }

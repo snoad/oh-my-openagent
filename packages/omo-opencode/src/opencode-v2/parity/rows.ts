@@ -6,6 +6,7 @@ import { hCliRows } from "./rows-h-cli"
 import { hCodecRows } from "./rows-h-codec"
 import { hFakeRows } from "./rows-h-fake"
 import { hClientRows, hGateRows } from "./rows-h-client"
+import { hClientMessageRows } from "./rows-h-client-messages"
 import { hClientLifecycleRows } from "./rows-h-client-lifecycle"
 import { hClientMiscRows } from "./rows-h-client-misc"
 import { hDiRows } from "./rows-h-di"
@@ -156,6 +157,7 @@ export const PARITY_ROWS: ParityRow[] = [
   ...hCliRows,
   ...hCodecRows,
   ...hClientRows,
+  ...hClientMessageRows,
   ...hClientLifecycleRows,
   ...hClientMiscRows,
   ...hGateRows,

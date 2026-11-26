@@ -6,13 +6,9 @@
 // are synchronous callbacks over one mutable value, and event subscriptions
 // are async iterables filtered by type and aborted through their signal.
 
-export type FakeRegistration = {
-  readonly dispose: () => Promise<void>
-}
+export type FakeRegistration = { readonly dispose: () => Promise<void> }
 
-export type FakeHookOptions = {
-  readonly providerID?: string
-}
+export type FakeHookOptions = { readonly providerID?: string }
 
 export type FakeScheduler = {
   now: () => number
@@ -53,7 +49,12 @@ type TransformEntry = {
 // the remaining callbacks do not run. A provider-scoped registration fires
 // whenever the fire options do not name a different provider.
 export type FakeHookRegistry = {
-  readonly registerHook: (domain: string, name: string, callback: StoredHook, options?: FakeHookOptions) => FakeRegistration
+  readonly registerHook: (
+    domain: string,
+    name: string,
+    callback: StoredHook,
+    options?: FakeHookOptions,
+  ) => FakeRegistration
   readonly fire: <TEvent>(domain: string, name: string, event: TEvent, options?: FakeHookOptions) => Promise<TEvent>
   readonly registerTransform: (domain: string, callback: StoredTransform) => FakeRegistration
   readonly replayTransforms: <TValue>(domain: string, fresh: TValue) => TValue

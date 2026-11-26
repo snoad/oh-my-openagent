@@ -44,7 +44,11 @@ function omoPluginLabel(plugin: V2ListedPlugin): string | null {
     return OMO_PLUGIN_PACKAGES.includes(normalized) ? normalized : null
   }
   if (plugin.source.type === "local") {
-    const segments = plugin.source.path.toLowerCase().replaceAll("\\", "/").split("/").filter((segment) => segment.length > 0)
+    const segments = plugin.source.path
+      .toLowerCase()
+      .replaceAll("\\", "/")
+      .split("/")
+      .filter((segment) => segment.length > 0)
     const last = segments.at(-1)
     return last !== undefined && OMO_PLUGIN_PACKAGES.includes(last) ? last : null
   }

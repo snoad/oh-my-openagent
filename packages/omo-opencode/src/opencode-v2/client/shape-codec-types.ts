@@ -1,10 +1,4 @@
-import type {
-  AgentPart,
-  FilePart,
-  ReasoningPart,
-  TextPart,
-  ToolPart,
-} from "@opencode-ai/sdk"
+import type { AgentPart, FilePart, ReasoningPart, TextPart, ToolPart } from "@opencode-ai/sdk"
 import type { SessionMessageInfo, SessionPromptInput } from "@opencode/client"
 
 // Shapes produced and consumed by the V1 <-> OpenCode 2 session shape codecs.
@@ -86,8 +80,7 @@ export type V2ToolStateOut =
     }
 
 export type V2ToolContentOut =
-  | { type: "text"; text: string }
-  | { type: "file"; uri: string; mime: string; name?: string | null }
+  { type: "text"; text: string } | { type: "file"; uri: string; mime: string; name?: string | null }
 
 export type V2AssistantContent =
   | { type: "text"; text: string; native?: Record<string, unknown> }

@@ -47,10 +47,7 @@ export type V2EngineStartInput = {
 
 export type V2EngineHooks = Hooks & { readonly dispose?: () => Promise<void> }
 
-export type V2EngineServer = (
-  input: V2EngineStartInput,
-  options?: Record<string, unknown>,
-) => Promise<V2EngineHooks>
+export type V2EngineServer = (input: V2EngineStartInput, options?: Record<string, unknown>) => Promise<V2EngineHooks>
 
 export type V2EngineModule = {
   readonly id?: string
@@ -79,10 +76,7 @@ async function startEngine(module: V2EngineModule, ctx: V2RuntimePluginContext):
   return module.server({ directory: ctx.location.directory, client: shim, serverUrl: undefined }, {})
 }
 
-export async function startV2Runtime(
-  ctx: V2RuntimePluginContext,
-  deps: V2RuntimeDeps = {},
-): Promise<V2Runtime> {
+export async function startV2Runtime(ctx: V2RuntimePluginContext, deps: V2RuntimeDeps = {}): Promise<V2Runtime> {
   const directory = ctx.location.directory
   const previous = activeV2Runtimes.get(directory)
   if (previous !== undefined) await stopV2Runtime(previous)

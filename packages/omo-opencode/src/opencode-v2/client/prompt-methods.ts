@@ -69,7 +69,12 @@ function admissionParts(
   })
 }
 
-async function admit(ctx: V2ShimContext, cache: SessionSnapshotCache, sessionID: string, body: V1PromptBody | undefined): Promise<void> {
+async function admit(
+  ctx: V2ShimContext,
+  cache: SessionSnapshotCache,
+  sessionID: string,
+  body: V1PromptBody | undefined,
+): Promise<void> {
   const input: SessionPromptInput = toV2PromptInput({
     sessionID,
     parts: admissionParts(sessionID, body?.parts ?? []),
@@ -79,7 +84,12 @@ async function admit(ctx: V2ShimContext, cache: SessionSnapshotCache, sessionID:
   await admitPrompt(ctx, input)
 }
 
-async function waitUntilIdle(ctx: V2ShimContext, sessionID: string, signal: AbortSignal | null | undefined, pollMs: number): Promise<void> {
+async function waitUntilIdle(
+  ctx: V2ShimContext,
+  sessionID: string,
+  signal: AbortSignal | null | undefined,
+  pollMs: number,
+): Promise<void> {
   for (;;) {
     const info = await ctx.session.get({ sessionID })
     if (info.time.busy === undefined) return

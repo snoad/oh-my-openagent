@@ -7,11 +7,7 @@ export type HostVersionInput = {
 }
 
 export type HostVersionRejectReason =
-  | "missing-version"
-  | "unparseable"
-  | "unsupported-major"
-  | "below-floor"
-  | "above-verified"
+  "missing-version" | "unparseable" | "unsupported-major" | "below-floor" | "above-verified"
 
 export type HostVersionSupport =
   | { readonly ok: true; readonly major: number; readonly minor: number; readonly patch: number }

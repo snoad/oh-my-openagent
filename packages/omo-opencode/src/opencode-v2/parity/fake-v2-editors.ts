@@ -63,7 +63,10 @@ export interface FakeToolDomain {
   list(): Promise<FakeToolInfo[]>
   transform(callback: (editor: FakeToolEditor) => void): Promise<FakeRegistration>
   reload(): Promise<void>
-  hook<TEvent extends object>(name: string, callback: (input: TEvent) => void | Promise<void>): Promise<FakeRegistration>
+  hook<TEvent extends object>(
+    name: string,
+    callback: (input: TEvent) => void | Promise<void>,
+  ): Promise<FakeRegistration>
 }
 
 // The recorded fixture JSON widens its literal unions to string, so the agent

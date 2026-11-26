@@ -51,7 +51,11 @@ export interface FakeSessionDomain {
   prompt(input: SessionPromptInput): Promise<SessionInboxUser>
   interrupt(input: SessionInterruptInput): Promise<SessionInterruptResponse>
   update(input: SessionUpdateInput): Promise<void>
-  hook<TEvent extends object>(name: string, callback: (input: TEvent) => void | Promise<void>, options?: FakeHookOptions): Promise<FakeRegistration>
+  hook<TEvent extends object>(
+    name: string,
+    callback: (input: TEvent) => void | Promise<void>,
+    options?: FakeHookOptions,
+  ): Promise<FakeRegistration>
 }
 
 export type FakeSessionStore = {

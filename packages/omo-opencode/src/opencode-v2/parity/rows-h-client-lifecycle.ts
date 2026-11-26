@@ -40,7 +40,15 @@ async function checkDelete(): Promise<void> {
   expect((await shim.session.delete({ path: { id: sessionID } })).data).toBe(false)
   const removed: string[] = []
   const withRemove = createV2ClientShim(
-    { ...ctx, session: { ...ctx.session, remove: async (input: { sessionID: string }) => { removed.push(input.sessionID) } } },
+    {
+      ...ctx,
+      session: {
+        ...ctx.session,
+        remove: async (input: { sessionID: string }) => {
+          removed.push(input.sessionID)
+        },
+      },
+    },
     { promptWaitPollMs: 1 },
   )
   await withRemove.session.delete({ path: { id: sessionID } })

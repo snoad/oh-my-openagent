@@ -46,7 +46,10 @@ function sessionStatusOf(info: SessionInfo): SessionStatus {
   return info.time.busy !== undefined ? { type: "busy" } : { type: "idle" }
 }
 
-export function createSessionLifecycleMethods(ctx: V2ShimContext, cache: SessionSnapshotCache): V1SessionLifecycleMethods {
+export function createSessionLifecycleMethods(
+  ctx: V2ShimContext,
+  cache: SessionSnapshotCache,
+): V1SessionLifecycleMethods {
   const statusMap = new Map<string, SessionStatus>()
 
   return {

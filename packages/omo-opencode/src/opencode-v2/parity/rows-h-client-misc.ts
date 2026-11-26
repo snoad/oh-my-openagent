@@ -24,7 +24,9 @@ async function checkAgents(): Promise<void> {
   const result = await shim.app.agents()
   expect(callOps(ctx, "agent.list")).toBe(1)
   expect(result.data?.length ?? 0).toBeGreaterThan(0)
-  expect(result.data?.every((agent) => typeof agent.name === "string" && typeof agent.permission.edit === "string") ?? false).toBe(true)
+  expect(
+    result.data?.every((agent) => typeof agent.name === "string" && typeof agent.permission.edit === "string") ?? false,
+  ).toBe(true)
 }
 
 async function checkProviderList(): Promise<void> {
@@ -50,5 +52,9 @@ export const hClientMiscRows: ParityRow[] = defineGroup("H-CLIENT", [
   row("TOAST", "tui.showToast emits the log-only marker and answers the V1 boolean", checkToast),
   row("AGENTS", "app.agents maps ctx.agent.list onto the V1 agent list", checkAgents),
   row("PROVIDER-LIST", "provider.list maps ctx.provider.list onto the V1 provider envelope", checkProviderList),
-  row("CONFIG-GET", "config.get caches the V1-shaped projection built from ctx.agent.list and ctx.tool.list", checkConfigGet),
+  row(
+    "CONFIG-GET",
+    "config.get caches the V1-shaped projection built from ctx.agent.list and ctx.tool.list",
+    checkConfigGet,
+  ),
 ])

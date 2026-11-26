@@ -64,7 +64,12 @@ describe("Fake OpenCode 2 plugin context", () => {
     // then
     expect(seen).toEqual(["unscoped"])
     seen.length = 0
-    await ctx.__fire("session", "model.request", { model: { id: "m", providerID: "claude" } }, { providerID: "anthropic" })
+    await ctx.__fire(
+      "session",
+      "model.request",
+      { model: { id: "m", providerID: "claude" } },
+      { providerID: "anthropic" },
+    )
     expect(seen).toEqual(["unscoped", "scoped"])
   })
 
@@ -199,7 +204,11 @@ describe("Fake OpenCode 2 plugin context", () => {
 
     // when
     await ctx.session.prompt({ sessionID: info.id, text: "user prompt" })
-    await ctx.session.prompt({ sessionID: info.id, text: "internal continuation", metadata: { omo: { internal: true } } })
+    await ctx.session.prompt({
+      sessionID: info.id,
+      text: "internal continuation",
+      metadata: { omo: { internal: true } },
+    })
 
     // then
     expect(fired).toHaveLength(1)
@@ -324,9 +333,12 @@ describe("Fake OpenCode 2 plugin context", () => {
         if (received.length === 1) break
       }
     })()
-    const registration = await ctx.rpc.register({ id: "omo" }, {
-      state: async () => ({ roster: 3 }),
-    })
+    const registration = await ctx.rpc.register(
+      { id: "omo" },
+      {
+        state: async () => ({ roster: 3 }),
+      },
+    )
 
     // when
     const result = await ctx.rpc.call({ rpcID: "omo", method: "state" })
