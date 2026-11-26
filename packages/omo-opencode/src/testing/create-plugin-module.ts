@@ -84,7 +84,8 @@ export type PluginModuleDeps = {
   createPluginInterface: typeof createPluginInterface
 }
 
-const defaultPluginModuleDeps: PluginModuleDeps = {
+// Exported for the OpenCode 2 runtime's D-9 override contract test.
+export const defaultPluginModuleDeps: PluginModuleDeps = {
   initConfigContext,
   installAgentSortShim,
   setAgentSortOrder,

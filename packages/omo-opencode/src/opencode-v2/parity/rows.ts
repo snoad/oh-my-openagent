@@ -8,7 +8,9 @@ import { hFakeRows } from "./rows-h-fake"
 import { hClientRows, hGateRows } from "./rows-h-client"
 import { hClientLifecycleRows } from "./rows-h-client-lifecycle"
 import { hClientMiscRows } from "./rows-h-client-misc"
+import { hDiRows } from "./rows-h-di"
 import { hLoadRows } from "./rows-h-load"
+import { hReloadRows } from "./rows-h-reload"
 import { liveRows } from "./rows-live"
 import { V2_LIMITS } from "./v2-limits"
 
@@ -157,6 +159,8 @@ export const PARITY_ROWS: ParityRow[] = [
   ...hClientLifecycleRows,
   ...hClientMiscRows,
   ...hGateRows,
+  ...hDiRows,
+  ...hReloadRows,
   ...liveRows,
   ...hMetaRows,
 ]
