@@ -4,6 +4,8 @@ import { v1EventSessionID } from "../events/v1-out-event"
 import { subscribeV2Events, type V2EventSubscriptionContext } from "../events/subscribe-v2-events"
 import { registerContextHookAdapter } from "../hooks/adapt-context-hook"
 import { registerRequestHookAdapters, type V2SessionHookContext } from "../hooks/adapt-request-hooks"
+import { registerModelResolveAdapter } from "../hooks/adapt-model-resolve"
+import { registerPromptHookAdapter } from "../hooks/adapt-prompt-hook"
 import { markHook } from "./hook-markers"
 import type { V2Runtime } from "./stop-v2-runtime"
 import type { V2RuntimePluginContext } from "./start-v2-runtime"
@@ -53,7 +55,6 @@ const v2RequestHooksAdapterRegistration: V2AdapterRegistration = {
   },
 }
 
-
 // Plan task 17: one context hook registration routes the request payload
 // through the V1 system/messages/params transforms (GAP-4 request
 // transforms); the id-keyed write-back lives in hooks/context-message-*.
@@ -64,8 +65,29 @@ const v2ContextHookAdapterRegistration: V2AdapterRegistration = {
   },
 }
 
+// Plan task 16: the prompt hook replays the V1 command interception and the
+// chat.message handler against the mutable admission (GAP-4 prompt, GAP-7
+// command entry); the model resolve adapter applies the same-provider model
+// override the chat.message handler requested and drops cross-provider
+// requests with the LIM-3 evidence.
+const v2PromptHookAdapterRegistration: V2AdapterRegistration = {
+  id: "v2-prompt-hook",
+  register: ({ ctx, runtime }) => {
+    void registerPromptHookAdapter({ ctx, runtime })
+  },
+}
+
+const v2ModelResolveAdapterRegistration: V2AdapterRegistration = {
+  id: "v2-model-resolve",
+  register: ({ ctx, runtime }) => {
+    void registerModelResolveAdapter({ ctx, runtime })
+  },
+}
+
 export const v2AdapterRegistrations: readonly V2AdapterRegistration[] = [
   v2EventAdapterRegistration,
   v2RequestHooksAdapterRegistration,
   v2ContextHookAdapterRegistration,
+  v2PromptHookAdapterRegistration,
+  v2ModelResolveAdapterRegistration,
 ]
