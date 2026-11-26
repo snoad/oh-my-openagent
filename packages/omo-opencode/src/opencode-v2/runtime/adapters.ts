@@ -2,6 +2,7 @@ import type { Event } from "@opencode-ai/sdk"
 
 import { v1EventSessionID } from "../events/v1-out-event"
 import { subscribeV2Events, type V2EventSubscriptionContext } from "../events/subscribe-v2-events"
+import { registerContextHookAdapter } from "../hooks/adapt-context-hook"
 import { registerRequestHookAdapters, type V2SessionHookContext } from "../hooks/adapt-request-hooks"
 import { markHook } from "./hook-markers"
 import type { V2Runtime } from "./stop-v2-runtime"
@@ -52,7 +53,19 @@ const v2RequestHooksAdapterRegistration: V2AdapterRegistration = {
   },
 }
 
+
+// Plan task 17: one context hook registration routes the request payload
+// through the V1 system/messages/params transforms (GAP-4 request
+// transforms); the id-keyed write-back lives in hooks/context-message-*.
+const v2ContextHookAdapterRegistration: V2AdapterRegistration = {
+  id: "v2-context-hook",
+  register: ({ ctx, runtime }) => {
+    registerContextHookAdapter({ ctx, runtime })
+  },
+}
+
 export const v2AdapterRegistrations: readonly V2AdapterRegistration[] = [
   v2EventAdapterRegistration,
   v2RequestHooksAdapterRegistration,
+  v2ContextHookAdapterRegistration,
 ]
