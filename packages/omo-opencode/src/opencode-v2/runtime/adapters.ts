@@ -2,6 +2,7 @@ import type { Event } from "@opencode-ai/sdk"
 
 import { v1EventSessionID } from "../events/v1-out-event"
 import { subscribeV2Events, type V2EventSubscriptionContext } from "../events/subscribe-v2-events"
+import { registerRequestHookAdapters, type V2SessionHookContext } from "../hooks/adapt-request-hooks"
 import { markHook } from "./hook-markers"
 import type { V2Runtime } from "./stop-v2-runtime"
 import type { V2RuntimePluginContext } from "./start-v2-runtime"
@@ -41,4 +42,17 @@ const v2EventAdapterRegistration: V2AdapterRegistration = {
   },
 }
 
-export const v2AdapterRegistrations: readonly V2AdapterRegistration[] = [v2EventAdapterRegistration]
+// Plan task 18: the model.request hook reaches the engine's chat.headers
+// handler; the session hook registrar is absent from the static shim context
+// slice, so the registration narrows the ctx to the hook-capable view.
+const v2RequestHooksAdapterRegistration: V2AdapterRegistration = {
+  id: "v2-request-hooks",
+  register: ({ ctx, runtime }) => {
+    registerRequestHookAdapters({ ctx: ctx as V2SessionHookContext, runtime })
+  },
+}
+
+export const v2AdapterRegistrations: readonly V2AdapterRegistration[] = [
+  v2EventAdapterRegistration,
+  v2RequestHooksAdapterRegistration,
+]
