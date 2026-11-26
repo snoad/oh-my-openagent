@@ -13,7 +13,7 @@ const TOAST_ROUTE = "/tui/show-toast"
 const AGENTS_ROUTE = "/agent"
 const PROVIDER_ROUTE = "/provider"
 const CONFIG_ROUTE = "/config"
-export const TOAST_LOG_MARKER = "[opencode-v2] toast"
+const TOAST_LOG_MARKER = "[opencode-v2] toast"
 
 type EditEffect = "ask" | "allow" | "deny"
 

@@ -11,7 +11,7 @@ import type { BoundaryRuleResult } from "./v2-boundary-rules"
 // scopes entry-file pinning to production files: the SDK surface test may runtime-import the two define leaves
 // to pin them.
 
-export const IMPORT_RULE_IDS = ["IMPORT-DIRECTION", "PLUGIN-RUNTIME-IMPORTS", "EFFECT-BAN"] as const
+const IMPORT_RULE_IDS = ["IMPORT-DIRECTION", "PLUGIN-RUNTIME-IMPORTS", "EFFECT-BAN"] as const
 export type ImportRuleId = (typeof IMPORT_RULE_IDS)[number]
 
 type CollectedImport = { readonly module: string; readonly typeOnly: boolean; readonly line: number }
@@ -119,7 +119,7 @@ function pluginRuntimeViolationOf(filePath: string, module: string, typeOnly: bo
 // the boundary test share the result without re-spawning the TypeScript native process.
 let importRulesCache: Promise<Record<ImportRuleId, string[]>> | undefined
 
-export function runImportBoundaryRules(): Promise<Record<ImportRuleId, string[]>> {
+function runImportBoundaryRules(): Promise<Record<ImportRuleId, string[]>> {
   importRulesCache ??= scanImportBoundaries()
   return importRulesCache
 }

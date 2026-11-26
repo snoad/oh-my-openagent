@@ -1,6 +1,6 @@
 export const OPENCODE_V2_MIN_VERSION = "2.4.0"
 
-export const OPENCODE_V2_NOTICE_TITLE = "Oh My OpenAgent on OpenCode 2"
+const OPENCODE_V2_NOTICE_TITLE = "Oh My OpenAgent on OpenCode 2"
 
 export const OPENCODE_V2_NOTICE_DURATION_MS = 15_000
 
