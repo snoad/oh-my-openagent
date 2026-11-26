@@ -1,11 +1,17 @@
+import type { Event } from "@opencode-ai/sdk"
+
+import { v1EventSessionID } from "../events/v1-out-event"
+import { subscribeV2Events, type V2EventSubscriptionContext } from "../events/subscribe-v2-events"
+import { markHook } from "./hook-markers"
 import type { V2Runtime } from "./stop-v2-runtime"
 import type { V2RuntimePluginContext } from "./start-v2-runtime"
 
 // Ordered adapter registration list (plan task 13). The runtime applies every
 // registration in order after the engine started, passing the ctx and the
-// runtime record (engine hooks, abort signal). The list is empty in task 13;
-// tasks 15 to 19 and 22 to 28 append their registrations here, so a later
-// wave only adds entries and never touches startV2Runtime again.
+// runtime record (engine hooks, abort signal). Task 14 adds the event
+// translation adapter; tasks 15 to 19 and 22 to 28 append their registrations
+// here, so a later wave only adds entries and never touches startV2Runtime
+// again.
 
 export type V2AdapterRegistration = {
   readonly id: string
@@ -15,4 +21,24 @@ export type V2AdapterRegistration = {
   }) => void | Promise<void>
 }
 
-export const v2AdapterRegistrations: readonly V2AdapterRegistration[] = []
+// Plan task 14: the translated V1 events reach the engine's event handler
+// and the event hook marker fires once per session. The SDK's strict Event
+// union cannot be honestly populated from OpenCode 2 payloads (the task-12
+// message-mirror decision), so the tolerant V1OutEvent crosses at this one
+// boundary; the runtime handler reads the event loosely.
+const v2EventAdapterRegistration: V2AdapterRegistration = {
+  id: "v2-events",
+  register: ({ ctx, runtime }) => {
+    void subscribeV2Events(
+      ctx as V2RuntimePluginContext & V2EventSubscriptionContext,
+      async ({ event }) => {
+        const sessionID = v1EventSessionID(event)
+        if (sessionID !== undefined) markHook("event", sessionID)
+        await runtime.engine.event?.({ event: event as unknown as Event })
+      },
+      { signal: runtime.abort.signal },
+    )
+  },
+}
+
+export const v2AdapterRegistrations: readonly V2AdapterRegistration[] = [v2EventAdapterRegistration]

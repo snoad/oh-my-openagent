@@ -4,6 +4,10 @@ import { LANDED_WAVES } from "./lan"
 import { hBoundRows } from "./rows-h-bound"
 import { hCliRows } from "./rows-h-cli"
 import { hCodecRows } from "./rows-h-codec"
+import { hEvtIgnoredRows } from "./rows-h-evt-ignored"
+import { hEvtIgnoredToolRows } from "./rows-h-evt-ignored-tool"
+import { hEvtPerformanceRows } from "./rows-h-evt-performance"
+import { hEvtRows } from "./rows-h-evt"
 import { hFakeRows } from "./rows-h-fake"
 import { hClientRows, hGateRows } from "./rows-h-client"
 import { hClientMessageRows } from "./rows-h-client-messages"
@@ -156,6 +160,10 @@ export const PARITY_ROWS: ParityRow[] = [
   ...hFakeRows,
   ...hCliRows,
   ...hCodecRows,
+  ...hEvtRows,
+  ...hEvtIgnoredRows,
+  ...hEvtIgnoredToolRows,
+  ...hEvtPerformanceRows,
   ...hClientRows,
   ...hClientMessageRows,
   ...hClientLifecycleRows,
