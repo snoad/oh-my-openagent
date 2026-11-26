@@ -620,6 +620,57 @@ describe("dispatchInternalPrompt shared gate behavior", () => {
     expect(promptCalls).toBe(1)
   })
 
+  test("#given a V2-backed client whose promptAsync admits exactly once per call #when two internal dispatches race for one idle session #then only one prompt is accepted", async () => {
+    // given
+    let admissions = 0
+    let releaseAdmission: (() => void) | undefined
+    const admissionGate = new Promise<void>((resolve) => {
+      releaseAdmission = resolve
+    })
+    const sessionStatuses: Record<string, { type: string }> = { ses_v2_backed: { type: "idle" } }
+    const client = {
+      session: {
+        status: async () => ({ data: sessionStatuses }),
+        // V2-backed shape (the opencode-v2 client shim contract): promptAsync
+        // performs exactly one raw admission per call, and the admitted
+        // session turns busy until its execution ends.
+        promptAsync: async () => {
+          admissions += 1
+          sessionStatuses.ses_v2_backed = { type: "busy" }
+          await admissionGate
+        },
+      },
+    }
+
+    // when
+    const first = dispatchInternalPrompt({
+      mode: "async",
+      client,
+      sessionID: "ses_v2_backed",
+      input: { path: { id: "ses_v2_backed" }, body: { parts: [{ type: "text", text: "continue" }] } },
+      source: "test:v2-backed:first",
+      settleMs: 0,
+      postDispatchHoldMs: 0,
+    })
+    await Promise.resolve()
+    const second = await dispatchInternalPrompt({
+      mode: "async",
+      client,
+      sessionID: "ses_v2_backed",
+      input: { path: { id: "ses_v2_backed" }, body: { parts: [{ type: "text", text: "resume" }] } },
+      source: "test:v2-backed:second",
+      settleMs: 0,
+      postDispatchHoldMs: 0,
+    })
+    releaseAdmission?.()
+    const firstResult = await first
+
+    // then
+    expect(firstResult.status).toBe("dispatched")
+    expect(second.status === "reserved" || second.status === "queued" || second.status === "active").toBe(true)
+    expect(admissions).toBe(1)
+  })
+
   test("#given settle is disabled and status is unavailable #when a second promptAsync starts after the first dispatch resolves #then the default dispatch hold keeps the session reserved", async () => {
     // given
     let promptCalls = 0

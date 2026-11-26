@@ -5,6 +5,9 @@ import { hBoundRows } from "./rows-h-bound"
 import { hCliRows } from "./rows-h-cli"
 import { hCodecRows } from "./rows-h-codec"
 import { hFakeRows } from "./rows-h-fake"
+import { hClientRows, hGateRows } from "./rows-h-client"
+import { hClientLifecycleRows } from "./rows-h-client-lifecycle"
+import { hClientMiscRows } from "./rows-h-client-misc"
 import { hLoadRows } from "./rows-h-load"
 import { liveRows } from "./rows-live"
 import { V2_LIMITS } from "./v2-limits"
@@ -150,6 +153,10 @@ export const PARITY_ROWS: ParityRow[] = [
   ...hFakeRows,
   ...hCliRows,
   ...hCodecRows,
+  ...hClientRows,
+  ...hClientLifecycleRows,
+  ...hClientMiscRows,
+  ...hGateRows,
   ...liveRows,
   ...hMetaRows,
 ]
