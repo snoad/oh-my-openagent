@@ -142,6 +142,8 @@
     "packages/omo-native/test/remote-background.test.ts: /bin/omo x2",
     "packages/omo-native/test/remote-bootstrap-published-release.test.ts: /bin/omo",
     "packages/omo-native/test/remote-cli-harness.ts: /bin/omo",
+    "packages/omo-opencode/src/opencode-v2/parity/rows-h-cli.ts: omo run",
+    "packages/omo-opencode/src/opencode-v2/parity/v2-limits.ts: omo run",
     "packages/omo-senpi/src/components/device-service/index.test.ts: /bin/omo"
   ]
 }
