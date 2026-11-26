@@ -159,20 +159,19 @@ function chatChunk(model, delta, finishReason) {
 
 function sendChatCompletion(res, model, body, step) {
   if (body.stream === false) {
-    const message =
-      step.tool_call
-        ? {
-            role: "assistant",
-            content: null,
-            tool_calls: [
-              {
-                id: `call_${mainRequestCount}`,
-                type: "function",
-                function: { name: step.tool_call.name, arguments: JSON.stringify(step.tool_call.arguments) },
-              },
-            ],
-          }
-        : { role: "assistant", content: step.text }
+    const message = step.tool_call
+      ? {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: `call_${mainRequestCount}`,
+              type: "function",
+              function: { name: step.tool_call.name, arguments: JSON.stringify(step.tool_call.arguments) },
+            },
+          ],
+        }
+      : { role: "assistant", content: step.text }
     const finish = step.tool_call ? "tool_calls" : "stop"
     res.writeHead(200, { "content-type": "application/json" }).end(
       JSON.stringify({
@@ -265,7 +264,9 @@ function failResponse(res, modeName) {
 
 function abortResponse(res) {
   res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache" })
-  res.write(`data: ${JSON.stringify({ type: "response.created", response: { id: "resp_abort", model: "gpt-fake" } })}\n\n`)
+  res.write(
+    `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_abort", model: "gpt-fake" } })}\n\n`,
+  )
   res.write(
     `data: ${JSON.stringify({ type: "response.output_text.delta", item_id: "msg_abort", output_index: 0, delta: "partial" })}\n\n`,
   )
@@ -283,7 +284,9 @@ const server = http.createServer(async (req, res) => {
   const isResponses = req.method === "POST" && req.url.includes("/responses")
   const isChat = req.method === "POST" && req.url.includes("/chat/completions")
   if (!isResponses && !isChat) {
-    res.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ error: "v2-fake-model: not found" }))
+    res
+      .writeHead(404, { "content-type": "application/json" })
+      .end(JSON.stringify({ error: "v2-fake-model: not found" }))
     return
   }
 

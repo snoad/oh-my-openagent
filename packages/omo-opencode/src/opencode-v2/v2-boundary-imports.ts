@@ -6,20 +6,15 @@ import type { SourceFile } from "typescript/unstable/ast"
 import { TypeScriptSourceParser } from "../shared/typescript-native-source-parser"
 import type { BoundaryRuleResult } from "./v2-boundary-rules"
 
-// Import-boundary rules (a) to (c) of the opencode-v2-compat plan, task 6. The parity
-// rows in parity/rows-h-bound.ts attach these checks; this module must not import
-// parity/rows.ts (rows.ts already imports rows-h-bound.ts, which imports this module).
-// Rule (b) scopes the exact entry-file pinning to production files: the SDK surface
-// test legitimately runtime-imports the two define leaves in order to pin them.
+// Import-boundary rules (a) to (c) of the opencode-v2-compat plan, task 6, attached by the parity rows in
+// parity/rows-h-bound.ts (which imports this module, so this module must not import parity/rows.ts). Rule (b)
+// scopes entry-file pinning to production files: the SDK surface test may runtime-import the two define leaves
+// to pin them.
 
-export const IMPORT_RULE_IDS = ["IMPORT-DIRECTION", "PLUGIN-RUNTIME-IMPORTS", "EFFECT-BAN"] as const
+const IMPORT_RULE_IDS = ["IMPORT-DIRECTION", "PLUGIN-RUNTIME-IMPORTS", "EFFECT-BAN"] as const
 export type ImportRuleId = (typeof IMPORT_RULE_IDS)[number]
 
-type CollectedImport = {
-  readonly module: string
-  readonly typeOnly: boolean
-  readonly line: number
-}
+type CollectedImport = { readonly module: string; readonly typeOnly: boolean; readonly line: number }
 
 const V2_ROOT = import.meta.dir
 const SRC_ROOT = path.resolve(V2_ROOT, "..")
@@ -124,7 +119,7 @@ function pluginRuntimeViolationOf(filePath: string, module: string, typeOnly: bo
 // the boundary test share the result without re-spawning the TypeScript native process.
 let importRulesCache: Promise<Record<ImportRuleId, string[]>> | undefined
 
-export function runImportBoundaryRules(): Promise<Record<ImportRuleId, string[]>> {
+function runImportBoundaryRules(): Promise<Record<ImportRuleId, string[]>> {
   importRulesCache ??= scanImportBoundaries()
   return importRulesCache
 }
@@ -164,7 +159,9 @@ async function scanImportBoundaries(): Promise<Record<ImportRuleId, string[]>> {
 
       // (a) IMPORT-DIRECTION
       if (!inV2 && module.includes("opencode-v2") && !IMPORT_DIRECTION_SEAM_PATHS.has(filePath)) {
-        violations["IMPORT-DIRECTION"].push(`${where} rule IMPORT-DIRECTION: files outside opencode-v2/ must not import ${module}`)
+        violations["IMPORT-DIRECTION"].push(
+          `${where} rule IMPORT-DIRECTION: files outside opencode-v2/ must not import ${module}`,
+        )
       }
 
       // (b) PLUGIN-RUNTIME-IMPORTS
@@ -174,7 +171,9 @@ async function scanImportBoundaries(): Promise<Record<ImportRuleId, string[]>> {
         )
       } else if (module === "@opencode-ai" || module.startsWith("@opencode-ai/")) {
         if (!typeOnly && inV2) {
-          violations["PLUGIN-RUNTIME-IMPORTS"].push(`${where} rule PLUGIN-RUNTIME-IMPORTS: runtime import of ${module} inside opencode-v2/`)
+          violations["PLUGIN-RUNTIME-IMPORTS"].push(
+            `${where} rule PLUGIN-RUNTIME-IMPORTS: runtime import of ${module} inside opencode-v2/`,
+          )
         }
       } else if (module === "@opencode/plugin" || module.startsWith("@opencode/plugin/")) {
         const violation = pluginRuntimeViolationOf(filePath, module, typeOnly)

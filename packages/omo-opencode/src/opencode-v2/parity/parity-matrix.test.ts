@@ -40,9 +40,7 @@ describe("OpenCode 2 parity matrix", () => {
 
   it("checks every landed hermetic row with a passing check", async () => {
     // given
-    const landed = PARITY_ROWS.filter(
-      (row) => row.kind === "hermetic" && row.wave <= LANDED_WAVES,
-    )
+    const landed = PARITY_ROWS.filter((row) => row.kind === "hermetic" && row.wave <= LANDED_WAVES)
 
     // when / then
     for (const row of landed) {
@@ -54,9 +52,7 @@ describe("OpenCode 2 parity matrix", () => {
 
   it("keeps every unlanded hermetic row pending without a check", () => {
     // given
-    const unlanded = PARITY_ROWS.filter(
-      (row) => row.kind === "hermetic" && row.wave > LANDED_WAVES,
-    )
+    const unlanded = PARITY_ROWS.filter((row) => row.kind === "hermetic" && row.wave > LANDED_WAVES)
 
     // when / then
     for (const row of unlanded) {

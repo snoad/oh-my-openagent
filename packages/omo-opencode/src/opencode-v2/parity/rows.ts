@@ -3,8 +3,15 @@ import { expect } from "./bun-test-shim"
 import { LANDED_WAVES } from "./lan"
 import { hBoundRows } from "./rows-h-bound"
 import { hCliRows } from "./rows-h-cli"
+import { hCodecRows } from "./rows-h-codec"
 import { hFakeRows } from "./rows-h-fake"
+import { hClientRows, hGateRows } from "./rows-h-client"
+import { hClientMessageRows } from "./rows-h-client-messages"
+import { hClientLifecycleRows } from "./rows-h-client-lifecycle"
+import { hClientMiscRows } from "./rows-h-client-misc"
+import { hDiRows } from "./rows-h-di"
 import { hLoadRows } from "./rows-h-load"
+import { hReloadRows } from "./rows-h-reload"
 import { liveRows } from "./rows-live"
 import { V2_LIMITS } from "./v2-limits"
 
@@ -148,6 +155,14 @@ export const PARITY_ROWS: ParityRow[] = [
   ...hBoundRows,
   ...hFakeRows,
   ...hCliRows,
+  ...hCodecRows,
+  ...hClientRows,
+  ...hClientMessageRows,
+  ...hClientLifecycleRows,
+  ...hClientMiscRows,
+  ...hGateRows,
+  ...hDiRows,
+  ...hReloadRows,
   ...liveRows,
   ...hMetaRows,
 ]

@@ -69,6 +69,7 @@ export type PluginModuleDeps = {
   loadConfigChain: typeof validatePluginConfig
   loadPluginConfig: typeof loadPluginConfig
   recordPluginTelemetry: typeof recordPluginTelemetry
+  ensureTuiPluginEntry: typeof ensureTuiPluginEntry
   initI18n: typeof initI18n
   initializeOpenClaw: typeof initializeOpenClaw
   isTmuxIntegrationEnabled: typeof isTmuxIntegrationEnabled
@@ -83,7 +84,8 @@ export type PluginModuleDeps = {
   createPluginInterface: typeof createPluginInterface
 }
 
-const defaultPluginModuleDeps: PluginModuleDeps = {
+// Exported for the OpenCode 2 runtime's D-9 override contract test.
+export const defaultPluginModuleDeps: PluginModuleDeps = {
   initConfigContext,
   installAgentSortShim,
   setAgentSortOrder,
@@ -103,6 +105,7 @@ const defaultPluginModuleDeps: PluginModuleDeps = {
   loadConfigChain: validatePluginConfig,
   loadPluginConfig,
   recordPluginTelemetry,
+  ensureTuiPluginEntry,
   initI18n,
   initializeOpenClaw,
   isTmuxIntegrationEnabled,
@@ -237,7 +240,7 @@ export function createPluginModule(overrides: Partial<PluginModuleDeps> = {}): P
       })
     }
     try {
-      ensureTuiPluginEntry()
+      deps.ensureTuiPluginEntry()
     } catch (error) {
       deps.log("[tui] tui.json self-heal failed", {
         error: error instanceof Error ? error.message : String(error),

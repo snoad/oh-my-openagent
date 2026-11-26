@@ -56,6 +56,15 @@ const RAW_PROMPT_ALLOWLIST = new Map<string, string>([
     path.join(WORKSPACE_ROOT, "packages", "omo-senpi", "src", "extension", "hand-browser-placement.test-fixture.ts"),
     "child-process test fixture run only by hand-browser-placement.test.ts; prompts an engine Agent wired to an in-process hand and never reaches an OpenCode session, so the main-session injection invariant does not apply",
   ],
+
+  [
+    path.join(SOURCE_ROOT, "opencode-v2", "client", "prompt-raw.ts"),
+    "the single OpenCode 2 admission call site backing the client shim consumed by gate-routed dispatch; performs no dispatch by itself",
+  ],
+  [
+    path.join(SOURCE_ROOT, "opencode-v2", "parity", "rows-h-fake.ts"),
+    "drives the hermetic fake OpenCode 2 ctx session store to pin its prompt-hook semantics; never reaches a real OpenCode session, so the main-session injection invariant does not apply",
+  ],
 ])
 
 async function listSourceFiles(directory: string): Promise<string[]> {
