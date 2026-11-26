@@ -11,6 +11,7 @@ import { hEvtRows } from "./rows-h-evt"
 import { hHookContextRows } from "./rows-h-hook-context"
 import { hHookPromptRows } from "./rows-h-hook-prompt"
 import { hHookRequestRows } from "./rows-h-hook-request"
+import { hHookToolRows } from "./rows-h-hook-tool"
 import { hFakeRows } from "./rows-h-fake"
 import { hClientRows, hGateRows } from "./rows-h-client"
 import { hClientMessageRows } from "./rows-h-client-messages"
@@ -170,6 +171,7 @@ export const PARITY_ROWS: ParityRow[] = [
   ...hHookRequestRows,
   ...hHookContextRows,
   ...hHookPromptRows,
+  ...hHookToolRows,
   ...hClientRows,
   ...hClientMessageRows,
   ...hClientLifecycleRows,

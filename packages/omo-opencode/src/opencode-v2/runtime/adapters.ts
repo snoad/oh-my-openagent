@@ -6,6 +6,7 @@ import { registerContextHookAdapter } from "../hooks/adapt-context-hook"
 import { registerRequestHookAdapters, type V2SessionHookContext } from "../hooks/adapt-request-hooks"
 import { registerModelResolveAdapter } from "../hooks/adapt-model-resolve"
 import { registerPromptHookAdapter } from "../hooks/adapt-prompt-hook"
+import { registerToolHookAdapters, type V2ToolHookContext } from "../hooks/adapt-tool-hooks"
 import { markHook } from "./hook-markers"
 import type { V2Runtime } from "./stop-v2-runtime"
 import type { V2RuntimePluginContext } from "./start-v2-runtime"
@@ -84,10 +85,21 @@ const v2ModelResolveAdapterRegistration: V2AdapterRegistration = {
   },
 }
 
+// Plan task 15: the tool execute hooks reach the engine's tool.execute
+// handlers with the aliased V1 tool names; the args write-back, the veto
+// propagation and the failed-call mirror live in hooks/adapt-tool-hooks.
+const v2ToolHooksAdapterRegistration: V2AdapterRegistration = {
+  id: "v2-tool-hooks",
+  register: ({ ctx, runtime }) => {
+    registerToolHookAdapters(ctx as V2ToolHookContext, runtime.engine, markHook)
+  },
+}
+
 export const v2AdapterRegistrations: readonly V2AdapterRegistration[] = [
   v2EventAdapterRegistration,
   v2RequestHooksAdapterRegistration,
   v2ContextHookAdapterRegistration,
   v2PromptHookAdapterRegistration,
   v2ModelResolveAdapterRegistration,
+  v2ToolHooksAdapterRegistration,
 ]
