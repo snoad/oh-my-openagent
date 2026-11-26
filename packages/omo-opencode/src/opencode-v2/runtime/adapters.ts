@@ -7,6 +7,8 @@ import { registerRequestHookAdapters, type V2SessionHookContext } from "../hooks
 import { registerModelResolveAdapter } from "../hooks/adapt-model-resolve"
 import { registerPromptHookAdapter } from "../hooks/adapt-prompt-hook"
 import { registerToolHookAdapters, type V2ToolHookContext } from "../hooks/adapt-tool-hooks"
+import { registerCompactionHookAdapters } from "../hooks/adapt-compaction-hooks"
+import { registerIdleContinuationAdapter } from "../hooks/adapt-idle-continuation"
 import { markHook } from "./hook-markers"
 import type { V2Runtime } from "./stop-v2-runtime"
 import type { V2RuntimePluginContext } from "./start-v2-runtime"
@@ -95,6 +97,28 @@ const v2ToolHooksAdapterRegistration: V2AdapterRegistration = {
   },
 }
 
+// Plan task 19: the raw session.compaction lifecycle drives the V1
+// capture/restore halves and the session compaction hook feeds the captured
+// context into the compaction request; the restore runs through
+// experimental.compaction.autocontinue exactly once per compaction.
+const v2CompactionHooksAdapterRegistration: V2AdapterRegistration = {
+  id: "v2-compaction-hooks",
+  register: ({ ctx, runtime }) => {
+    void registerCompactionHookAdapters({ ctx, runtime })
+  },
+}
+
+// Plan task 19: the translated V1 session.idle event stays the only
+// continuation trigger; the experimental.idle host hook registers as a
+// marker and the per-session idle budget bounds consecutive gate-dispatched
+// internal admissions.
+const v2IdleContinuationAdapterRegistration: V2AdapterRegistration = {
+  id: "v2-idle-continuation",
+  register: ({ ctx, runtime }) => {
+    registerIdleContinuationAdapter({ ctx, runtime })
+  },
+}
+
 export const v2AdapterRegistrations: readonly V2AdapterRegistration[] = [
   v2EventAdapterRegistration,
   v2RequestHooksAdapterRegistration,
@@ -102,4 +126,6 @@ export const v2AdapterRegistrations: readonly V2AdapterRegistration[] = [
   v2PromptHookAdapterRegistration,
   v2ModelResolveAdapterRegistration,
   v2ToolHooksAdapterRegistration,
+  v2CompactionHooksAdapterRegistration,
+  v2IdleContinuationAdapterRegistration,
 ]

@@ -93,6 +93,64 @@ async function runLoop(
   }
 }
 
+// Raw V2 event listeners (plan task 19): the compaction lifecycle arrives as
+// raw OpenCode 2 events whose payloads the V1 translation drops, so the
+// compaction adapter subscribes through this list and receives each event
+// BEFORE translation (pre-processor). A listener that throws is logged and
+// skipped; the other listeners and the loop keep running.
+export type V2RawEventListener = {
+  readonly types: readonly string[]
+  readonly onEvent: (event: V2IncomingEvent) => void | Promise<void>
+}
+
+export type SubscribeV2RawEventsOptions = {
+  readonly debug?: (message: string) => void
+  readonly signal?: AbortSignal
+  readonly stopTimeoutMs?: number
+}
+
+export function subscribeV2RawEvents(
+  ctx: Pick<V2EventSubscriptionContext, "event">,
+  listeners: readonly V2RawEventListener[],
+  options: SubscribeV2RawEventsOptions = {},
+): V2EventSubscription {
+  const debug = options.debug ?? defaultDebug
+  const controller = new AbortController()
+  options.signal?.addEventListener("abort", () => controller.abort(), { once: true })
+  const types = [...new Set(listeners.flatMap((listener) => [...listener.types]))]
+  const iteration = ctx.event.subscribe({ types, signal: controller.signal })
+  const loopDone = runRawLoop(iteration, listeners, debug)
+  return {
+    stop: async () => {
+      controller.abort()
+      await withTimeout(loopDone, options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS, debug)
+    },
+  }
+}
+
+async function runRawLoop(
+  iteration: AsyncIterable<V2IncomingEvent>,
+  listeners: readonly V2RawEventListener[],
+  debug: (message: string) => void,
+): Promise<void> {
+  try {
+    for await (const v2Event of iteration) {
+      for (const listener of listeners) {
+        if (!listener.types.includes(v2Event.type)) continue
+        try {
+          await listener.onEvent(v2Event)
+        } catch (error) {
+          debug(
+            `[v2-events] raw listener failed for ${v2Event.type}: ${error instanceof Error ? error.message : String(error)}`,
+          )
+        }
+      }
+    }
+  } catch (error) {
+    debug(`[v2-events] raw subscription loop failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
 async function withTimeout(promise: Promise<void>, ms: number, debug: (message: string) => void): Promise<void> {
   let timeout: ReturnType<typeof setTimeout> | undefined
   try {
