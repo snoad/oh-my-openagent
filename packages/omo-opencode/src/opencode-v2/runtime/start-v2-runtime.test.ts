@@ -130,7 +130,7 @@ describe("startV2Runtime", () => {
     }
 
     // then
-    expect(runtime.subscriptions?.length).toBe(1)
+    expect(runtime.subscriptions?.length, "v2-events loop + task-23 plan-source raw listener").toBe(2)
     const stats = lines.filter((line) => line.startsWith("[opencode-v2] event stats "))
     expect(stats, "exactly one stats line at runtime stop").toHaveLength(1)
     const parsed = JSON.parse((stats[0] ?? "").slice("[opencode-v2] event stats ".length)) as Record<string, unknown>

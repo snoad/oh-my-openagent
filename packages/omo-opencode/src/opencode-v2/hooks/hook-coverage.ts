@@ -27,6 +27,13 @@ const REACHABLE_2 = (key: string): V2HookCoverageEntry => ({
   coverageWave: 2,
 })
 
+const REACHABLE_3 = (key: string, note: string): V2HookCoverageEntry => ({
+  key,
+  status: "reachable",
+  coverageWave: 3,
+  note,
+})
+
 const REACHABLE_4 = (key: string, note: string): V2HookCoverageEntry => ({
   key,
   status: "reachable",
@@ -64,6 +71,7 @@ const COVERAGE_LEDGER_KEYS: readonly V2HookCoverageEntry[] = [
     limitId: "LIM-18",
     note: "inert on OpenCode 2 because the host owns plugin updates",
   },
+  REACHABLE_3("config", "the V1 config pipeline runs through the task-23 registration plan source"),
   REACHABLE_4("bashFileReadGuard", "tool.execute.before surface, wave-4 suite"),
   REACHABLE_4("btwSideContextInjector", "messages.transform surface, wave-4 suite"),
   REACHABLE_4("commentChecker", "tool.execute surface, wave-4 suite"),

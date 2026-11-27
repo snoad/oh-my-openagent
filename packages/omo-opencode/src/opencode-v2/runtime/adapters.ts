@@ -9,6 +9,8 @@ import { registerPromptHookAdapter } from "../hooks/adapt-prompt-hook"
 import { registerToolHookAdapters, type V2ToolHookContext } from "../hooks/adapt-tool-hooks"
 import { registerCompactionHookAdapters } from "../hooks/adapt-compaction-hooks"
 import { registerIdleContinuationAdapter } from "../hooks/adapt-idle-continuation"
+import { createPlanSource } from "../registration/plan-source"
+import type { PlanSourceContext } from "../registration/plan-source-context"
 import { markHook } from "./hook-markers"
 import type { V2Runtime } from "./stop-v2-runtime"
 import type { V2RuntimePluginContext } from "./start-v2-runtime"
@@ -120,6 +122,27 @@ const v2IdleContinuationAdapterRegistration: V2AdapterRegistration = {
   },
 }
 
+// Plan task 23: the registration plan source recomputes the V1 config
+// pipeline into the registration plan (initial recompute awaited here) and
+// subscribes the config.updated / *.updated debounce. A pipeline failure
+// fails the plugin setup: the exact marker line plus the rejection, and no
+// partial plan is applied (reloads only follow a successful diff).
+const v2PlanSourceAdapterRegistration: V2AdapterRegistration = {
+  id: "v2-plan-source",
+  register: async ({ ctx, runtime }) => {
+    try {
+      const source = await createPlanSource(ctx as V2RuntimePluginContext & PlanSourceContext, runtime.engine, {
+        signal: runtime.abort.signal,
+      })
+      runtime.planSource = source
+      runtime.subscriptions?.push(source.subscription)
+    } catch (error) {
+      console.warn("[opencode-v2] registration failed")
+      throw error
+    }
+  },
+}
+
 export const v2AdapterRegistrations: readonly V2AdapterRegistration[] = [
   v2EventAdapterRegistration,
   v2RequestHooksAdapterRegistration,
@@ -129,4 +152,5 @@ export const v2AdapterRegistrations: readonly V2AdapterRegistration[] = [
   v2ToolHooksAdapterRegistration,
   v2CompactionHooksAdapterRegistration,
   v2IdleContinuationAdapterRegistration,
+  v2PlanSourceAdapterRegistration,
 ]

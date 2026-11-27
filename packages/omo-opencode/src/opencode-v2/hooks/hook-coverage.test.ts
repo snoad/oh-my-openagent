@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 
 import { createHooks } from "../../create-hooks"
+import { createPluginInterface } from "../../plugin-interface"
 import { createFakeV2Context } from "../parity/fake-v2-context"
 import { createFakeV2SideEffects } from "../parity/fake-v2-side-effects"
 import { LANDED_WAVES } from "../parity/lan"
@@ -88,10 +89,19 @@ describe("V2_HOOK_COVERAGE_LEDGER", () => {
       engineDeps: {
         createHooks: (args) => {
           const hooks = spyCreatedHooks(createHooks(args), recorder)
-          spiedKeys = Object.keys(hooks)
-            .filter((key) => key !== "disposeHooks")
-            .sort()
+          spiedKeys = ["config", ...Object.keys(hooks).filter((key) => key !== "disposeHooks")].sort()
           return hooks
+        },
+        createPluginInterface: (args) => {
+          const pluginInterface = createPluginInterface(args)
+          const pipelineConfig = pluginInterface.config
+          return {
+            ...pluginInterface,
+            config: async (config: Parameters<NonNullable<typeof pipelineConfig>>[0]) => {
+              recorder.record("config")
+              await pipelineConfig(config)
+            },
+          }
         },
       },
       sideEffects: createFakeV2SideEffects(),

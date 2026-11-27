@@ -22,7 +22,7 @@ import { hClientMiscRows } from "./rows-h-client-misc"
 import { hDiRows } from "./rows-h-di"
 import { hLoadRows } from "./rows-h-load"
 import { hReloadRows } from "./rows-h-reload"
-import { hRegSnapshotRows } from "./rows-h-reg-snapshot"
+import { hRegWaveRows } from "./rows-h-reg"
 import { liveRows } from "./rows-live"
 import { V2_LIMITS } from "./v2-limits"
 
@@ -184,7 +184,7 @@ export const PARITY_ROWS: ParityRow[] = [
   ...hGateRows,
   ...hDiRows,
   ...hReloadRows,
-  ...hRegSnapshotRows,
+  ...hRegWaveRows,
   ...liveRows,
   ...hMetaRows,
   ...hMetaCiRows,

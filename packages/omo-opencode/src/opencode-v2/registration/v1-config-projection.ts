@@ -34,3 +34,7 @@ export type V1ConfigProjection = {
   provider: NonNullable<V1Config["provider"]>
   unmapped: readonly string[]
 }
+
+// The projection without the `unmapped` metadata list: the shape handed to
+// the V1 config handler, which expects the plain V1 Config fields only.
+export type V1WorkingConfig = Omit<V1ConfigProjection, "unmapped">

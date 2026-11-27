@@ -1,5 +1,6 @@
 import type { V2EngineHooks } from "./start-v2-runtime"
 import { activeV2Runtimes, releaseV2ProcessDep, type V2RuntimeTracker } from "./v2-runtime-deps"
+import type { PlanSource } from "../registration/plan-source"
 
 // stopV2Runtime (plan task 13): the cleanup half of the OpenCode 2 runtime.
 // Aborts the runtime subscriptions, releases the process-wide dependencies
@@ -18,6 +19,10 @@ export type V2Runtime = {
   // runtime stop, not only when a host invokes the plugin cleanup. Optional:
   // the parity row harnesses hand-build runtime records without it.
   readonly subscriptions?: Array<{ readonly stop: () => Promise<void> }>
+  // The task-23 registration plan source; tasks 24 to 28 read getPlan() and
+  // the snapshot through it. Assigned by the plan-source adapter after the
+  // runtime record is built; optional for the hand-built row harnesses.
+  planSource?: PlanSource
   readonly stop: () => Promise<void>
   stopped: boolean
 }
