@@ -63,3 +63,15 @@ jobs:
           name: opencode-v2-parity-evidence
           path: .omo/evidence/**
           retention-days: 14
+
+      - name: Write job summary
+        if: always()
+        shell: bash
+        env:
+          JOB_SUMMARY_TITLE: OpenCode 2 parity (live)
+          JOB_SUMMARY_STATUS: ${{ job.status }}
+          JOB_SUMMARY_DETAILS: |
+            - Installs dependencies, builds the plugin, and bootstraps the pinned OpenCode 2 host.
+            - Runs the live parity driver in CI mode with `--skip-v1 --no-build` and uploads the evidence.
+          JOB_SUMMARY_NEXT: Download the `opencode-v2-parity-evidence` artifact and read `results.json` plus the row evidence files.
+        run: GITHUB_STEP_SUMMARY="$GITHUB_STEP_SUMMARY" bash .github/scripts/write-job-summary.sh
