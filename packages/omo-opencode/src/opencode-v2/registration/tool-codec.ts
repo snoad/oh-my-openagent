@@ -72,12 +72,22 @@ export type V1ToolDefinitionMirror = {
 // The REAL SDK Tool.Result of the pinned @opencode/plugin 2.4.1, reached
 // through the root type import (the only allowed @opencode/ type import): the
 // tool domain hook's execute.after event carries `result: Tool.Result` and its
-// completed branch is the completed result shape. Live row L-10 at HEAD
-// a69eaf7234 proved the host stringifies a content array into "[object
-// Object]" when execute returns { content: [...] }, so the model-visible text
-// must ride the SDK `output` string field.
+// completed branch is the completed result shape. Live rows L-10 proved the
+// host's model-visible renderer prints "[object Object]" for BOTH the
+// { content: [...] } and the { output: string } return shapes; the SDK Result
+// also allows `content` as a PLAIN STRING, and that is the shape the renderer
+// passes through, so execute returns exactly { content: <V1 string> }.
+// Options carry codemode: false because the host exposes editor.add'd tools
+// through Code Mode (the `execute` runner) unless the entry opts out, and the
+// host's own strings define codemode === false as a "direct simulated tool"
+// ("Permitted tools are now available as direct tool calls."); V1 parity is
+// every plugin tool as a direct function tool.
 type ToolHookEvent = Parameters<Parameters<Plugin.Context["tool"]["hook"]>[1]>[0]
-export type SdkToolResult = Extract<ToolHookEvent, { readonly status: "completed" }>["result"]
+type CompletedToolHookEvent = Extract<ToolHookEvent, { readonly status: "completed" }>
+export type SdkToolResult = CompletedToolHookEvent["result"]
+export type SdkToolOptions = NonNullable<NonNullable<CompletedToolHookEvent["info"]>["options"]>
+
+const DIRECT_TOOL_OPTIONS: SdkToolOptions = { codemode: false }
 
 export type V2ToolExecute = (input: unknown, context: V2ToolExecuteContext) => Promise<SdkToolResult>
 
@@ -85,6 +95,7 @@ export type V2ToolDefinition = {
   readonly name: string
   readonly description: string
   readonly input: Record<string, unknown>
+  readonly options: SdkToolOptions
   readonly execute: V2ToolExecute
 }
 
@@ -150,13 +161,13 @@ export function toV2ToolDefinition(name: string, v1: V1ToolDefinitionMirror): V2
     name,
     description: v1.description,
     input,
+    options: DIRECT_TOOL_OPTIONS,
     execute: async (v2Input, context) => {
       const result = await v1.execute(isRecord(v2Input) ? v2Input : {}, v1ContextOf(context))
       const output = v1OutputOf(result)
       const metadata = typeof result === "string" ? undefined : result.metadata
       return {
-        output,
-        content: [{ type: "text" as const, text: output }],
+        content: output,
         ...(metadata === undefined ? {} : { metadata }),
       }
     },

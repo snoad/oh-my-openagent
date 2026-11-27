@@ -98,10 +98,10 @@ describe("toV2ToolDefinition execute", () => {
     )
 
     // then
-    expect(result).toEqual({ output: "matched parity", content: [{ type: "text", text: "matched parity" }] })
+    expect(result).toEqual({ content: "matched parity" })
   })
 
-  it("#given a V1 tool returning the object result form #when the V2 execute runs #then the output string and metadata land in the SDK result fields", async () => {
+  it("#given a V1 tool returning the object result form #when the V2 execute runs #then the V1 string rides the SDK content field", async () => {
     // given
     const v2 = toV2ToolDefinition(
       "task",
@@ -121,10 +121,7 @@ describe("toV2ToolDefinition execute", () => {
     )
 
     // then
-    expect(result).toEqual({
-      output: "done\n<task_metadata>x</task_metadata>",
-      content: [{ type: "text", text: "done\n<task_metadata>x</task_metadata>" }],
-    })
+    expect(result).toEqual({ content: "done\n<task_metadata>x</task_metadata>" })
   })
 
   it("#given a V1 object result carrying metadata #when the V2 execute runs #then the metadata rides the SDK result metadata field", async () => {
@@ -147,11 +144,18 @@ describe("toV2ToolDefinition execute", () => {
     )
 
     // then
-    expect(result).toEqual({
-      output: "done",
-      content: [{ type: "text", text: "done" }],
-      metadata: { k: 1 },
-    })
+    expect(result).toEqual({ content: "done", metadata: { k: 1 } })
+  })
+
+  it("#given a built tool definition #when its registration fields are read #then the entry opts out of Code Mode so the host lists it as a direct function tool", () => {
+    // given
+    const v2 = toV2ToolDefinition(
+      "grep",
+      stubTool(async () => "x"),
+    )
+
+    // then
+    expect(v2.options).toEqual({ codemode: false })
   })
 
   it("#given the built execute #when its return type is checked #then it is assignable to the SDK Tool.Result the after hook receives", () => {

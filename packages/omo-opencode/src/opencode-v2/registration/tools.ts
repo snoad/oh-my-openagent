@@ -5,7 +5,7 @@ import { log } from "../../shared"
 import type { HostStateSnapshot } from "./host-state-snapshot"
 import type { PlanSource } from "./plan-source"
 import { guardReplayEditor } from "./replay-guard"
-import { toV2ToolDefinition, v1ToolMirrorOf, type V2ToolDefinition } from "./tool-codec"
+import { toV2ToolDefinition, v1ToolMirrorOf, type SdkToolOptions, type V2ToolDefinition } from "./tool-codec"
 
 // registerToolTransform (plan task 25): registers ONE recompute step with
 // domain "tool" on the task-23 plan source. The tool set is the engine's own
@@ -47,6 +47,7 @@ type V2ToolRegistrationEntry = {
   readonly description: string
   readonly input: Record<string, unknown>
   readonly parameters: Record<string, unknown>
+  readonly options: SdkToolOptions
   readonly execute: V2ToolDefinition["execute"]
 }
 
@@ -56,6 +57,7 @@ type V2MutableToolEntry = {
   description: string
   input: Record<string, unknown>
   parameters?: Record<string, unknown>
+  options?: SdkToolOptions
   execute: V2ToolDefinition["execute"]
 }
 
@@ -87,7 +89,15 @@ function pristineToolRecordsOf(items: readonly V2ToolEditorItem[]): readonly Pri
 }
 
 function registrationEntryOf(name: string, v2: V2ToolDefinition): V2ToolRegistrationEntry {
-  return { id: name, name, description: v2.description, input: v2.input, parameters: v2.input, execute: v2.execute }
+  return {
+    id: name,
+    name,
+    description: v2.description,
+    input: v2.input,
+    parameters: v2.input,
+    options: v2.options,
+    execute: v2.execute,
+  }
 }
 
 function applyToolToEditor(name: string, v2: V2ToolDefinition, editor: V2ToolEditor): void {
@@ -97,6 +107,7 @@ function applyToolToEditor(name: string, v2: V2ToolDefinition, editor: V2ToolEdi
       tool.description = v2.description
       tool.input = v2.input
       tool.parameters = v2.input
+      tool.options = v2.options
       tool.execute = v2.execute
     })
     return

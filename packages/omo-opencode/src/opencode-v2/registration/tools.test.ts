@@ -208,11 +208,11 @@ describe("registerToolTransform over the real engine", () => {
           id: "call_tool_exec",
           signal: new AbortController().signal,
         },
-      )) as { output?: unknown }
+      )) as { content?: string }
 
       // then
-      expect(typeof result.output).toBe("string")
-      expect((result.output as string).length).toBeGreaterThan(0)
+      expect(typeof result.content).toBe("string")
+      expect(result.content?.length ?? 0).toBeGreaterThan(0)
     } finally {
       await stopBoot(boot)
     }
