@@ -10,8 +10,11 @@
 # {"status":"error","content":null,"error":{"type":"unknown","message":...}}
 # with the V1 guard message byte-for-byte, and the cleanup stats lines are
 # present in serve.out. Coverage:
-#   good live run    L-01/L-02/L-07/L-09/L-11/L-20/L-21/L-22/L-24 PASS,
-#                    L-08 PARTIAL (sisyphus line deferred), L-15/L-18 pending
+#   good live run    L-01/L-02/L-03/L-07/L-08/L-09/L-11/L-20/L-21/L-22/L-24
+#                    PASS (the stub models the registered state: the agents
+#                    captures derive from the V1 baseline fixtures and the
+#                    main scenario A request carries the sisyphus system
+#                    first line), L-15/L-18 pending
 #   good post run    L-15 PASS (ambient sessions tolerated; absent system
 #                    opencode = version clause not applicable), L-11 PASS
 #                    (stats line, translated > 0), L-24 PASS (bound holds)
@@ -72,7 +75,7 @@ start_stub() {
 run_runner() {
   local dir="$1" manifest="$2" out="$3" extra="${4:-}"
   mkdir -p "$out"
-  ( cd "$REPO_ROOT" && bun "$RUNNER" --wave 2 --api "http://127.0.0.1:$STUB_PORT" \
+  ( cd "$REPO_ROOT" && bun "$RUNNER" --wave 3 --api "http://127.0.0.1:$STUB_PORT" \
       --password stub-pass --plugin-log "$dir/serve.out" --host-log "$dir/host.log" \
       --manifest "$manifest" --out "$out" $extra ) > "$out/runner.out" 2>&1
   return $?
@@ -190,13 +193,23 @@ LOG
   cat > "$dir/plugin-file.log" <<'LOG'
 [bash-file-read-guard] warned on bash file read command {"sessionID":"ses_stub_c","command":"cat /tmp/probe.txt"}
 LOG
-  cat > "$dir/req-a/requests.jsonl" <<'JSONL'
-{"model":"gpt-fake","input":[{"type":"message","role":"developer","content":"You are a host default agent prompt."},{"type":"message","role":"user","content":[{"type":"input_text","text":"Reply with exactly: OQA_A_FINAL"}]}],"tools":[{"type":"function","name":"read"}]}
-{"model":"gpt-fake","input":[{"type":"message","role":"developer","content":"You are a host default agent prompt."}],"tools":[]}
-JSONL
-  cat > "$dir/req-b/requests.jsonl" <<'JSONL'
-{"model":"gpt-fake","input":[{"type":"message","role":"developer","content":"You are a host default agent prompt."},{"type":"message","role":"user","content":[{"type":"input_text","text":"Read parity-file.txt"}]}],"tools":[{"type":"function","name":"read"}]}
-JSONL
+  # The registered state: the main scenario A request (tools non-empty)
+  # carries the default agent's (sisyphus) system first line as the developer
+  # content; the aux request keeps the host placeholder.
+  local sisyphus_line
+  sisyphus_line="$(oqa_st_sisyphus_first_line)"
+  jq -n --arg line "$sisyphus_line" -c '({
+    model: "gpt-fake",
+    input: [
+      {type: "message", role: "developer", content: $line},
+      {type: "message", role: "user", content: [{type: "input_text", text: "Reply with exactly: OQA_A_FINAL"}]}
+    ],
+    tools: [{type: "function", name: "read"}]
+  }), ({
+    model: "gpt-fake",
+    input: [{type: "message", role: "developer", content: "You are a host default agent prompt."}],
+    tools: []
+  })' > "$dir/req-a/requests.jsonl"
   cat > "$dir/events-a.sse" <<'SSE'
 data: {"type":"session.created","data":{"sessionID":"ses_stub_a"}}
 
@@ -216,6 +229,30 @@ data: {"type":"session.execution.completed","data":{"sessionID":"ses_stub_b"}}
 
 SSE
   printf 'Ask anything\n' > "$dir/tui-smoke.log"
+
+  # The registered-state agent captures (L-03): derived from the committed V1
+  # baseline fixtures, one entry per unique baseline id with the visible row's
+  # flags and the fixture prompt bytes; the after capture adds the hot agent.
+  # The real 2.4.1 GET /api/agent answer lists agents in insertion order, so
+  # the stub keeps the fixture row order (the reduce dedupe preserves first
+  # hits; group_by/unique_by would sort and break the L-03 order assertion).
+  jq -c '[.[] | select(.hidden != true or .native == true)]
+    | reduce .[] as $row ([]; if ([.[] | .id] | index($row.id)) == null then . + [$row] else . end)
+    | .[] | {id, name, mode, hidden: (.hidden == true), request: {}}' \
+    "$FIXTURES_ROOT/agents.json" > "$dir/agents-rows.jsonl"
+  jq -R -s 'split("\n") | map(select(length > 0) | fromjson)' "$dir/agents-rows.jsonl" > "$dir/agents-rows.json"
+  # The real 2.4.1 GET /api/agent answer shape is the {data: [...]} envelope.
+  jq -c --slurpfile prompts "$FIXTURES_ROOT/agent-prompts.json" \
+    '{data: map(. + {system: ($prompts[0][.id] // null), permissions: []})}' "$dir/agents-rows.json" > "$dir/agents-before.json"
+  jq -c '.data + [{"id":"oqa-hot-agent","name":"Oqa-Hot-Agent","mode":"subagent","hidden":false,"system":"hot probe prompt","permissions":[]}] | {data: .}' \
+    "$dir/agents-before.json" > "$dir/agents-after.json"
+  cp "$dir/agents-before.json" "$dir/agents.json"
+  rm -f "$dir/agents-rows.jsonl" "$dir/agents-rows.json"
+  local before_count after_count
+  before_count="$(jq '.data | length' "$dir/agents-before.json")"
+  after_count="$(jq '.data | length' "$dir/agents-after.json")"
+  [ "$before_count" -gt 0 ] || { oqa_st_log "agents-before capture is empty"; return 1; }
+
   cat > "$dir/manifest.json" <<JSON
 {
   "wave": 2,
@@ -234,6 +271,9 @@ SSE
   ],
   "tuiSmokeLog": "$dir/tui-smoke.log",
   "pluginFileLog": "$dir/plugin-file.log",
+  "agentsBeforeFile": "$dir/agents-before.json",
+  "agentsAfterFile": "$dir/agents-after.json",
+  "hotAgentId": "oqa-hot-agent",
   "sandboxPath": "$dir/sandbox-gone",
   "scriptedSteps": {"a": 1, "b": 2, "c": 2}
 }
@@ -252,6 +292,9 @@ JSON
   },
   "locations": [],
   "pluginFileLog": "$dir/plugin-file.log",
+  "agentsBeforeFile": "$dir/agents-before.json",
+  "agentsAfterFile": "$dir/agents-after.json",
+  "hotAgentId": "oqa-hot-agent",
   "sandboxPath": "$dir/sandbox-gone",
   "isolation": {
     "systemVersionBefore": "1.19.4",
@@ -288,14 +331,13 @@ main() {
   local good="$TMP/good"
   write_good_dir "$good"
 
-  # 1. all-good live phase: executed rows PASS, L-08 PARTIAL, L-15/L-18 pending
+  # 1. all-good live phase: executed rows PASS, L-15/L-18 pending
   start_stub "$good" || { oqa_st_fail "stub did not start"; return 1; }
   run_runner "$good" "$good/manifest.json" "$good/out-live" || true
   local results="$good/out-live/results.json"
-  for row in L-01 L-02 L-07 L-09 L-11 L-20 L-21 L-22 L-24; do
+  for row in L-01 L-02 L-03 L-07 L-08 L-09 L-11 L-20 L-21 L-22 L-24; do
     expect_row "$results" "$row" "true" "good live"
   done
-  expect_row "$results" "L-08" "partial" "good live"
   expect_row "$results" "L-15" "pending" "good live"
   expect_row "$results" "L-18" "pending" "good live"
 
@@ -331,18 +373,17 @@ main() {
   broken_case "L-08" "system-marker-missing" \
     "sed -i '/hook experimental.chat.system.transform fired/d' '$TMP/case-L-08-system-marker-missing/serve.out'"
 
-  # 3b. L-08 full-strength PASS case: the sisyphus first line present in the
-  # first fake model request turns the partial verdict into PASS.
-  local dir="$TMP/case-L-08-full"
-  cp -r "$good" "$dir"; rm -rf "$dir/out-live" "$dir/out"
-  rebase_case "$dir" "$good" "$dir"
-  local sisyphus_line
-  sisyphus_line="$(oqa_st_sisyphus_first_line)"
-  jq -c --arg line "$sisyphus_line" '.input[0].content = $line' \
-    "$dir/req-a/requests.jsonl" > "$dir/req.jsonl.tmp" && mv "$dir/req.jsonl.tmp" "$dir/req-a/requests.jsonl"
-  start_stub "$dir" || { oqa_st_fail "L-08 full: stub did not start"; return 1; }
-  run_runner "$dir" "$dir/manifest.json" "$dir/out" || true
-  expect_row "$dir/out/results.json" "L-08" "true" "L-08 full-strength"
+  # The L-08 full-strength PASS is the good live run itself since the stub
+  # models the registered state (the sisyphus first line is in the main
+  # request). L-03 FAIL cases: a baseline agent dropped from the after
+  # capture, a mutated prompt byte, and the missing after-capture manifest
+  # entry ("not proven" never passes).
+  broken_case "L-03" "after-agent-dropped" \
+    "jq '.data |= map(select(.id != \"librarian\"))' '$TMP/case-L-03-after-agent-dropped/agents-after.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-03-after-agent-dropped/agents-after.json'"
+  broken_case "L-03" "after-prompt-byte-mutated" \
+    "jq '(.data[] | select(.id == \"sisyphus\") | .system) |= (.[0:8] + \"XX\" + .[10:])' '$TMP/case-L-03-after-prompt-byte-mutated/agents-after.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-03-after-prompt-byte-mutated/agents-after.json'"
+  broken_case "L-03" "after-capture-missing" \
+    "jq 'del(.agentsAfterFile)' '$TMP/case-L-03-after-capture-missing/manifest.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-03-after-capture-missing/manifest.json'"
 
   broken_case "L-09" "read-tag-missing" \
     "oqa_st_write_ctx_b_notag '$TMP/case-L-09-read-tag-missing'"

@@ -474,6 +474,36 @@ JSON
 
   oqa_pl_tui_smoke || true
 
+  # ---- L-03 agent captures (plan task 24): GET /api/agent before the host
+  # config change, then a config rewrite (a probe agent in the agent section)
+  # whose config.updated/agent.updated events trigger the task-23 recompute
+  # (500 ms debounce) and the agent replay; the observable settle condition is
+  # polled with a deadline, never assumed.
+  local hot_agent="oqa-hot-agent"
+  local agents_before="$WORK_DIR/agents-before.json" agents_after="$WORK_DIR/agents-after.json"
+  oqa_v2_api GET /api/agent > "$agents_before" 2>/dev/null || printf '{"data":[]}' > "$agents_before"
+  local cfg_changed
+  cfg_changed="$(jq --arg id "$hot_agent" '.agent = ((.agent // {}) + { ($id): { "description": "live parity hot agent", "mode": "subagent" } })' "$cfg_dir/opencode.json")"
+  printf '%s\n' "$cfg_changed" > "$cfg_dir/opencode.json"
+  oqa_pl_log "host config rewritten with the probe agent $hot_agent (L-03 after-change capture)"
+  local i hot_seen="" resp=""
+  for i in $(seq 1 60); do
+    resp="$(oqa_v2_api GET /api/agent 2>/dev/null)" || resp=""
+    if printf '%s' "$resp" | jq -e --arg id "$hot_agent" '[.data[].id] | index($id) != null and index("sisyphus") != null' >/dev/null 2>&1; then
+      hot_seen=1
+      break
+    fi
+    if ! kill -0 "$OQA_V2_SERVER_PID" 2>/dev/null; then break; fi
+    sleep 1
+  done
+  if [ -n "$hot_seen" ]; then
+    printf '%s' "$resp" > "$agents_after"
+    oqa_pl_pass "probe agent $hot_agent visible and sisyphus re-registered after the host config change"
+  else
+    printf '{"data":[]}' > "$agents_after"
+    oqa_pl_log "probe agent never settled within the deadline (failure QA path: L-03 after-change assertions fail)"
+  fi
+
   local host_log_path="$OQA_V2_SANDBOX/host-opencode.log"
   cp "$(oqa_v2_log_path)/opencode.log" "$host_log_path" 2>/dev/null || touch "$host_log_path"
   local plugin_file_log="$OQA_V2_SANDBOX/plugin-file.log"
@@ -499,6 +529,9 @@ JSON
   "tuiSmokeLog": "$WORK_DIR/tui-smoke.log",
   "pluginFileLog": "$plugin_file_log",
   "sandboxOmoConfig": "$omo_cfg",
+  "agentsBeforeFile": "$agents_before",
+  "agentsAfterFile": "$agents_after",
+  "hotAgentId": "$hot_agent",
   "scriptedSteps": { "a": 1, "b": 2, "c": 2 }
 }
 JSON
@@ -522,7 +555,10 @@ JSON
     oqa_pl_log "live runner reported failures (rc=$live_rc); continuing to teardown for the evidence"
   fi
 
-  # ---- plugin reload for the stats lines, then shutdown ----
+  # ---- plugin reload for the stats lines, then the host-config-change ----
+  # captures (L-10, L-16): after the reload the plugin is active again with a
+  # fresh registration; scenario d drives the scripted grep tool call and
+  # scenario e captures the visible tool set after the config change.
   oqa_pl_log "triggering the plugin reload so the previous runtimes emit their stats lines..."
   oqa_pl_reload_for_stats "$OQA_V2_SANDBOX/serve.out" "$cfg_dir/opencode.json" "$cfg_body" || true
 
@@ -583,6 +619,9 @@ JSON
   "locations": [],
   "pluginFileLog": "$EV_LIVE/plugin-file.log",
   "sandboxOmoConfig": "$omo_cfg",
+  "agentsBeforeFile": "$agents_before",
+  "agentsAfterFile": "$agents_after",
+  "hotAgentId": "$hot_agent",
   "sandboxPath": "$sandbox_path",
   "isolation": {
     "systemOpencode": "$sys_opencode",
