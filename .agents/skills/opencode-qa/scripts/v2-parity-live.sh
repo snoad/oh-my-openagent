@@ -416,6 +416,10 @@ oqa_pl_main() {
   [ -d "$plugin_dir" ] || { oqa_pl_fail "plugin dir not found: $plugin_dir"; return 1; }
   cfg_dir="$(oqa_v2_config_path)" || return 1
   mkdir -p "$cfg_dir"
+  # Session model universe: openai/gpt-fake only. A baseline-matching
+  # anthropic provider cannot be added here: the title and summary agents
+  # resolve to it and the host drives the Anthropic Messages API at the fake
+  # server, which 404s and fails every session.
   cfg_body="$(cat <<JSON
 {
   "model": "openai/gpt-fake",
@@ -513,6 +517,12 @@ JSON
   local plugin_file_log="$OQA_V2_SANDBOX/plugin-file.log"
   cp "$TMPDIR/oh-my-opencode.log" "$plugin_file_log" 2>/dev/null || touch "$plugin_file_log"
 
+  # The L-03 default-agent surface reads scenario A's session context; fetch
+  # it while the server is alive and hand the file to the runner by manifest.
+  mkdir -p "$EV_LIVE"
+  oqa_v2_api GET "/api/session/$sid_a/context" > "$EV_LIVE/context-a.json" 2>/dev/null || true
+  local context_a_file="$EV_LIVE/context-a.json"
+
   local serve_location="$OQA_V2_SANDBOX/tmp"
   cat > "$WORK_DIR/manifest.json" <<JSON
 {
@@ -535,6 +545,7 @@ JSON
   "sandboxOmoConfig": "$omo_cfg",
   "agentsBeforeFile": "$agents_before",
   "agentsAfterFile": "$agents_after",
+  "contextAFile": "$context_a_file",
   "hotAgentId": "$hot_agent",
   "scriptedSteps": { "a": 1, "b": 2, "c": 2 }
 }
@@ -598,6 +609,13 @@ JSON
   oqa_pl_start_fake "$WORK_DIR/scenario-e.json" "$WORK_DIR/req-e" || true
   oqa_pl_run_once e "v2 parity e" "Reply with exactly: OQA_E_FINAL" "$PROJ_DIR" && sid_e="$OQA_PL_SID" || true
 
+  # Post-phase scenario contexts (d and e) while the server is still alive.
+  for ctx_key in d e; do
+    eval "ctx_sid=\"\$sid_${ctx_key}\""
+    [ -n "$ctx_sid" ] && oqa_v2_api GET "/api/session/$ctx_sid/context" \
+      > "$EV_LIVE/context-$ctx_key.json" 2>/dev/null || true
+  done
+
   # ---- shutdown, post-shutdown log copies, teardown, post phase ----
   oqa_v2_serve_stop
   sleep 1
@@ -608,12 +626,6 @@ JSON
   cp "$OQA_V2_SANDBOX/serve.out" "$EV_LIVE/serve.out" 2>/dev/null || true
   cp "$(oqa_v2_log_path)/opencode.log" "$EV_LIVE/host-opencode.log" 2>/dev/null || true
   cp "$TMPDIR/oh-my-opencode.log" "$EV_LIVE/plugin-file.log" 2>/dev/null || true
-  # Post-phase scenario contexts (d and e) once their session ids exist.
-  for ctx_key in d e; do
-    eval "ctx_sid=\"\$sid_${ctx_key}\""
-    [ -n "$ctx_sid" ] && oqa_v2_api GET "/api/session/$ctx_sid/context" \
-      > "$EV_LIVE/context-$ctx_key.json" 2>/dev/null || true
-  done
   cp "$WORK_DIR/req-d/requests.jsonl" "$EV_LIVE/requests-d.jsonl" 2>/dev/null || true
   cp "$WORK_DIR/req-e/requests.jsonl" "$EV_LIVE/requests-e.jsonl" 2>/dev/null || true
 

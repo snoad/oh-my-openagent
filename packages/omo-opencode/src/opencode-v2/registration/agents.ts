@@ -10,6 +10,8 @@
 // evidence). ctx.agent.reload() is never called here: the task-23 plan source
 // reloads the domain only when its plan section changed.
 
+import { log } from "../../shared"
+
 import { guardReplayEditor } from "./replay-guard"
 import type { AgentReplayContext, AgentReplayEditor, AgentReplayItem } from "./agent-replay-types"
 import { assignAgentItem, canonicalAgentKey } from "./agent-v1-to-v2"
@@ -18,6 +20,7 @@ import type { PlanAgentConfig, RegistrationPlan } from "./registration-plan"
 import type { PlanStep } from "./plan-steps"
 
 const AGENT_STEP_ID = "agent-registration"
+const LOG_MARKER = "[opencode-v2] agent-registration"
 
 // Records the pristine editor value before any edit. Ids this runtime already
 // registered are filtered out: the host hands the transform a fresh value
@@ -45,22 +48,26 @@ function recordPristineAgents(
 // the V1 key names (plan-diff withV1AgentNames); name_only entries rewrite
 // only the name so a host agent the pipeline never edited keeps its own
 // fields.
-function replayAgentPlan(editor: AgentReplayEditor, plan: RegistrationPlan): ReadonlySet<string> {
+function replayAgentPlan(editor: AgentReplayEditor, plan: RegistrationPlan, logWrites: boolean): ReadonlySet<string> {
   const written = new Set<string>()
   const upserts: ReadonlyArray<readonly [string, PlanAgentConfig]> = [
     ...Object.entries(plan.agents.added),
     ...Object.entries(plan.agents.modified),
   ]
+  const writes: string[] = []
   for (const [key, entry] of upserts) {
     const id = canonicalAgentKey(key)
     if (written.has(id)) continue
     written.add(id)
     editor.update(id, (item: AgentReplayItem) => assignAgentItem(item, key, entry))
+    if (logWrites)
+      writes.push(`${id}(name ${String(entry.name ?? key)}${entry.name_only === true ? " name_only" : ""})`)
   }
   for (const key of plan.agents.removed) editor.remove(canonicalAgentKey(key))
   if (plan.defaultAgent !== undefined) {
     editor.default(canonicalAgentKey(plan.defaultAgent))
   }
+  if (logWrites) log(`${LOG_MARKER}: replayed ${String(writes.length)} agents: ${writes.join(", ")}`)
   return written
 }
 
@@ -74,6 +81,7 @@ export function registerAgentTransform(
 ): PlanStep {
   const ownIds = new Set<string>()
   let ownDefault: string | undefined
+  let logged = false
   return {
     id: AGENT_STEP_ID,
     domain: "agent",
@@ -83,7 +91,8 @@ export function registerAgentTransform(
           recordPristineAgents(editor, snapshot, ownIds, ownDefault)
           const plan = getPlan()
           if (plan === undefined) return editor
-          for (const id of replayAgentPlan(editor, plan)) ownIds.add(id)
+          for (const id of replayAgentPlan(editor, plan, !logged)) ownIds.add(id)
+          logged = true
           const applied = getPlan()?.defaultAgent
           ownDefault = applied === undefined ? undefined : canonicalAgentKey(applied)
           return editor

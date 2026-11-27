@@ -1,15 +1,38 @@
-// L-03 order assertions (plan task 24) under the recorded host limit LIM-13:
-// the OpenCode 2 host lists agents in insertion order (default agent first,
-// plugin registrations interleaved by editor update re-insertion) and the
-// AgentEditor offers no reorder, so the row asserts exactly what the host
-// guarantees instead of the V1 baseline order: the default agent leads, the
-// omo ids keep their canonical order among themselves, and the pre-existing
-// host ids keep their before-capture relative order. The list order relative
-// to the V1 baseline itself is never asserted (LIM-13 in v2-limits.ts).
+// L-03 agent check helpers (plan task 24). Order assertions under the
+// recorded host limit LIM-13: the OpenCode 2 host lists agents in insertion
+// order (default agent first, plugin registrations interleaved by editor
+// update re-insertion) and the AgentEditor offers no reorder, so the row
+// asserts exactly what the host guarantees instead of the V1 baseline order:
+// the default agent leads, the omo ids keep their canonical order among
+// themselves, and the pre-existing host ids keep their before-capture
+// relative order. The list order relative to the V1 baseline itself is never
+// asserted (LIM-13 in v2-limits.ts carries the evidence). The default-agent
+// surface helpers serve the same row: the session context messages carry the
+// agent the run executed under, and the request carries the fixture body's
+// identity line (the host recomputes the omo-model-core ref hash for the live
+// model, so the fixture's first line can never match the request bytes).
 
 const PRIMARY_ORDER = ["sisyphus", "hephaestus", "prometheus", "atlas"] as const
 
 const OMO_ORDER = ["sisyphus", "hephaestus", "prometheus", "atlas", "metis", "momus", "sisyphus-junior"]
+
+export function fixtureIdentityLine(prompt: string): string {
+  const afterModel = prompt.split("</omo-model-core>")[1] ?? prompt
+  return afterModel.split("\n").find((line) => line.startsWith('You are "')) ?? ""
+}
+
+export function contextAgentsOf(body: unknown): string[] {
+  if (body === null || typeof body !== "object") return []
+  const data = (body as { data?: unknown }).data
+  if (!Array.isArray(data)) return []
+  const agents = new Set<string>()
+  for (const message of data) {
+    if (message === null || typeof message !== "object") continue
+    const agent = (message as { agent?: unknown }).agent
+    if (typeof agent === "string" && agent !== "") agents.add(agent)
+  }
+  return [...agents]
+}
 
 function strictlyAscending(positions: ReadonlyArray<number>): boolean {
   return [...positions].every((position, index) => index === 0 || position > positions[index - 1])

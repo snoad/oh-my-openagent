@@ -148,6 +148,11 @@ oqa_st_sisyphus_first_line() {
   jq -r '.sisyphus' "$FIXTURES_ROOT/agent-prompts.json" 2>/dev/null | head -1
 }
 
+oqa_st_sisyphus_identity_line() {
+  jq -r '.sisyphus | split("</omo-model-core>")[1] | split("\n") | map(select(startswith("You are \""))) | .[0] // empty' \
+    "$FIXTURES_ROOT/agent-prompts.json" 2>/dev/null
+}
+
 write_good_dir() {
   local dir="$1" start first_seen
   mkdir -p "$dir/req-a" "$dir/req-b" "$dir/proj-a" "$dir/proj-b"
@@ -201,16 +206,18 @@ LOG
   # (host-only names and the disabled_tools entry excluded); the aux request
   # keeps the host placeholder.
   printf '%s\n' '{ "[opencode]": { "disabled_tools": ["look_at"] } }' > "$dir/omo.jsonc"
-  local sisyphus_line tools_json
+  local sisyphus_line identity_line tools_json
   sisyphus_line="$(oqa_st_sisyphus_first_line)"
+  identity_line="$(oqa_st_sisyphus_identity_line)"
   jq -c '[.tools | map({key: .id, value: {type: "function", name: .id, parameters: .parameters}}) | from_entries | to_entries[].value]
     | map(select((.name | IN("bash", "read", "write", "question", "todowrite", "webfetch", "invalid", "look_at")) | not))' \
     "$FIXTURES_ROOT/tools.json" > "$dir/req-a/tools.json"
   tools_json="$(cat "$dir/req-a/tools.json")"
-  jq -n --arg line "$sisyphus_line" --argjson tools "$tools_json" '({
+  jq -n --arg line "$sisyphus_line" --arg identity "$identity_line" --argjson tools "$tools_json" '({
     model: "gpt-fake",
     input: [
       {type: "message", role: "developer", content: $line},
+      {type: "message", role: "developer", content: $identity},
       {type: "message", role: "user", content: [{type: "input_text", text: "Reply with exactly: OQA_A_FINAL"}]}
     ],
     tools: $tools
@@ -219,6 +226,8 @@ LOG
     input: [{type: "message", role: "developer", content: "You are a host default agent prompt."}],
     tools: []
   })' -c > "$dir/req-a/requests.jsonl"
+  # The L-03 default-agent session surface: scenario A ran under sisyphus.
+  printf '{"data":[{"id":"msg_1","role":"assistant","agent":"sisyphus","content":[{"type":"text","text":"OQA_A_FINAL"}]}]}\n' > "$dir/context-a.json"
   # L-10 (scenario d): the scripted grep function_call with its V1-shaped
   # string function_call_output.
   mkdir -p "$dir/req-d" "$dir/req-e"
@@ -310,6 +319,7 @@ SSE
   "pluginFileLog": "$dir/plugin-file.log",
   "agentsBeforeFile": "$dir/agents-before.json",
   "agentsAfterFile": "$dir/agents-after.json",
+  "contextAFile": "$dir/context-a.json",
   "hotAgentId": "oqa-hot-agent",
   "sandboxOmoConfig": "$dir/omo.jsonc",
   "sandboxPath": "$dir/sandbox-gone",
@@ -334,6 +344,7 @@ JSON
   "pluginFileLog": "$dir/plugin-file.log",
   "agentsBeforeFile": "$dir/agents-before.json",
   "agentsAfterFile": "$dir/agents-after.json",
+  "contextAFile": "$dir/context-a.json",
   "hotAgentId": "oqa-hot-agent",
   "sandboxOmoConfig": "$dir/omo.jsonc",
   "sandboxPath": "$dir/sandbox-gone",

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs"
 
-import { orderProblems } from "./live-checks-agents-order"
+import { contextAgentsOf, fixtureIdentityLine, orderProblems } from "./live-checks-agents-order"
 
 import {
   fail,
@@ -13,21 +13,15 @@ import {
 } from "./live-check-context"
 
 // Strict L-03 (plan task 24): the registered agent set on the OpenCode 2
-// host equals the V1 baseline agent set. The driver captures GET /api/agent
-// before and after a host config change (manifest agentsBeforeFile /
-// agentsAfterFile + hotAgentId); the check asserts the ordered id set, the
-// per-agent mode/hidden/name flags and the built-in demotion against
-// fixtures/v1-baseline/agents.json, byte equality of every system prompt
-// against fixtures/v1-baseline/agent-prompts.json, and the default agent
-// through scenario A's fake model request (the developer content carries the
-// sisyphus system first line). The list ORDER relative to the V1 baseline is
-// a recorded limit (LIM-13: the host lists agents in insertion order and the
-// editor offers no reorder), so the order assertion holds exactly what the
-// host guarantees: the default agent leads, the omo ids keep their canonical
-// order among themselves, and the pre-existing host ids keep their
-// before-capture relative order (LIM-13 in v2-limits.ts carries the evidence).
+// host equals the V1 baseline agent set. The check asserts the ordered id
+// set, the per-agent mode/hidden flags and the built-in demotion against
+// fixtures/v1-baseline/agents.json (display names only for the plugin
+// agents: the pipeline output carries no name for host-owned built-ins),
+// byte equality of every system prompt against agent-prompts.json, and the
+// default agent through scenario A's request body plus the session agent
+// surface. Order is the LIM-13 reduced guarantee (live-checks-agents-order).
 
-type BaselineRow = { id: string; name: string; mode: string; hidden: unknown }
+type BaselineRow = { id: string; name: string; mode: string; hidden: unknown; native?: unknown }
 type CapturedAgent = {
   id?: unknown
   name?: unknown
@@ -40,6 +34,7 @@ type AgentsManifest = {
   readonly agentsBeforeFile?: string
   readonly agentsAfterFile?: string
   readonly hotAgentId?: string
+  readonly contextAFile?: string
 }
 
 function readJson(path: string): unknown {
@@ -104,7 +99,12 @@ function captureProblems(
     if ((item.hidden === true) !== (row.hidden === true)) {
       problems.push(`${label}: ${row.id} hidden ${String(item.hidden)} != baseline ${String(row.hidden)}`)
     }
-    if (item.name !== row.name) problems.push(`${label}: ${row.id} name ${String(item.name)} != baseline ${row.name}`)
+    // Display names are asserted only for the pipeline-named plugin agents
+    // (native: false); host-owned built-ins carry no name in the pipeline
+    // output, so the contract asserts the flags only.
+    if (row.native !== true && item.name !== row.name) {
+      problems.push(`${label}: ${row.id} name ${String(item.name)} != baseline ${row.name}`)
+    }
     const prompt = prompts[row.id]
     if (prompt === undefined) problems.push(`${label}: no baseline prompt fixture for ${row.id}`)
     else if (prompt === null) {
@@ -114,11 +114,6 @@ function captureProblems(
       problems.push(`${label}: ${row.id} system prompt bytes differ from the baseline fixture`)
   }
   return problems
-}
-
-function escapedFirstLine(prompt: string): string {
-  const firstLine = prompt.split("\n")[0] ?? ""
-  return JSON.stringify(firstLine).slice(1, -1)
 }
 
 function scenarioOr(ctx: LiveCheckContext, key: "a" | "b" | "c"): LiveScenarioRun | undefined {
@@ -170,19 +165,29 @@ export const checkAgents: LiveCheck = async (ctx) => {
   const sisyphusPrompt = prompts["sisyphus"] ?? ""
   const bodies = scenario === undefined ? [] : readRequestBodies(scenario.requestsFile)
   const mainRequest = bodies.find((body) => body.includes('"tools":[{') || body.includes('"tools": [{'))
-  const escaped = escapedFirstLine(sisyphusPrompt)
-  const defaultProven =
+  const identityLine = fixtureIdentityLine(sisyphusPrompt)
+  const identityEscaped = JSON.stringify(identityLine).slice(1, -1)
+  const requestProvesSisyphus =
     mainRequest !== undefined &&
-    (mainRequest.includes(escaped) || mainRequest.includes(sisyphusPrompt.split("\n")[0] ?? ""))
-  if (!defaultProven)
-    problems.push("default: scenario A's main fake model request does not carry the sisyphus system first line")
+    identityLine !== "" &&
+    (mainRequest.includes(identityLine) || mainRequest.includes(identityEscaped))
+  const contextBody = manifest.contextAFile === undefined ? undefined : readJson(manifest.contextAFile)
+  const sessionAgents = contextAgentsOf(contextBody)
+  const contextProvesSisyphus = sessionAgents.includes("sisyphus")
+  if (contextBody === undefined)
+    problems.push("default: the manifest carries no contextAFile; the session agent surface is unproven")
+  if (!requestProvesSisyphus)
+    problems.push("default: scenario A's request does not carry the sisyphus system body (ref is per-model)")
+  if (!contextProvesSisyphus)
+    problems.push(`default: scenario A's session ran under: ${sessionAgents.join(",") || "(none)"}, not sisyphus`)
   evidence.push(
     `baseline ids: ${[...new Set(baseline.map((row) => row.id))].join(",")}`,
     `captured before ids: ${[...before.keys()].join(",")}`,
     `captured after ids: ${[...after.keys()].join(",")}`,
     `hot agent ${hotId ?? "(none)"} present after the config change: ${hotPresent}`,
     `registered omo order (primaries first): ${order === undefined ? "canonical" : order}`,
-    `default agent proven through scenario A's request developer content: ${defaultProven}`,
+    `default agent proven through scenario A's request developer content: ${requestProvesSisyphus}`,
+    `default agent proven through scenario A's session agent surface: ${contextProvesSisyphus} (agents: ${sessionAgents.join(",") || "none"})`,
     ...problems,
     "",
   )
