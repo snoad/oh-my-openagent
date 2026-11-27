@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import type { Plugin } from "@opencode/plugin"
 
 import {
   toolInputSchema,
@@ -6,6 +7,7 @@ import {
   type V1ToolArgSchemaMirror,
   type V1ToolDefinitionMirror,
   type V1ToolExecuteContext,
+  type V2ToolExecute,
 } from "./tool-codec"
 
 function argOf(jsonSchema: Record<string, unknown>, defType = "string"): V1ToolArgSchemaMirror {
@@ -78,7 +80,7 @@ describe("toolInputSchema", () => {
 })
 
 describe("toV2ToolDefinition execute", () => {
-  it("#given a V1 tool returning a string #when the V2 execute runs #then the result carries the V1 string as text content", async () => {
+  it("#given a V1 tool returning a string #when the V2 execute runs #then the result is the SDK shape carrying the V1 string as output", async () => {
     // given
     const seenContexts: unknown[] = []
     const v2 = toV2ToolDefinition(
@@ -96,10 +98,10 @@ describe("toV2ToolDefinition execute", () => {
     )
 
     // then
-    expect(result).toEqual({ content: [{ type: "text", text: "matched parity" }] })
+    expect(result).toEqual({ output: "matched parity", content: [{ type: "text", text: "matched parity" }] })
   })
 
-  it("#given a V1 tool returning the object result form #when the V2 execute runs #then the output string lands in the content", async () => {
+  it("#given a V1 tool returning the object result form #when the V2 execute runs #then the output string and metadata land in the SDK result fields", async () => {
     // given
     const v2 = toV2ToolDefinition(
       "task",
@@ -119,7 +121,53 @@ describe("toV2ToolDefinition execute", () => {
     )
 
     // then
-    expect(result.content).toEqual([{ type: "text", text: "done\n<task_metadata>x</task_metadata>" }])
+    expect(result).toEqual({
+      output: "done\n<task_metadata>x</task_metadata>",
+      content: [{ type: "text", text: "done\n<task_metadata>x</task_metadata>" }],
+    })
+  })
+
+  it("#given a V1 object result carrying metadata #when the V2 execute runs #then the metadata rides the SDK result metadata field", async () => {
+    // given
+    const v2 = toV2ToolDefinition(
+      "task",
+      stubTool(async () => ({ output: "done", metadata: { k: 1 } })),
+    )
+
+    // when
+    const result = await v2.execute(
+      {},
+      {
+        sessionID: "ses_1",
+        agent: "build",
+        messageID: "msg_1",
+        id: "call_1",
+        signal: new AbortController().signal,
+      },
+    )
+
+    // then
+    expect(result).toEqual({
+      output: "done",
+      content: [{ type: "text", text: "done" }],
+      metadata: { k: 1 },
+    })
+  })
+
+  it("#given the built execute #when its return type is checked #then it is assignable to the SDK Tool.Result the after hook receives", () => {
+    // given: the SDK result type derived from the pinned plugin package
+    type ToolHookEvent = Parameters<Parameters<Plugin.Context["tool"]["hook"]>[1]>[0]
+    type SdkToolResult = Extract<ToolHookEvent, { readonly status: "completed" }>["result"]
+    const v2 = toV2ToolDefinition(
+      "grep",
+      stubTool(async () => "x"),
+    )
+
+    // when: the execute return must satisfy the SDK result type
+    const asSdk: (input: unknown, context: Parameters<V2ToolExecute>[1]) => Promise<SdkToolResult> = v2.execute
+
+    // then: the assignment compiled (type-level) and the function is intact
+    expect(typeof asSdk).toBe("function")
   })
 
   it("#given a V1 execute that rejects #when the V2 execute awaits it #then the same error propagates as the tool error", async () => {

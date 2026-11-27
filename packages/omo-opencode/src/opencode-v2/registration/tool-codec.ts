@@ -1,7 +1,6 @@
 import type { ToolDefinition } from "@opencode-ai/plugin"
+import type { Plugin } from "@opencode/plugin"
 
-import { fromV1ToolOutput } from "../client/tool-result-codecs"
-import type { V2ToolContentOut } from "../client/shape-codec-types"
 import { isRecord } from "../events/v2-event-payload"
 
 // toV2ToolDefinition (plan task 25): the V1 registry tool (SRC/plugin/tool.ts
@@ -12,8 +11,9 @@ import { isRecord } from "../events/v2-event-payload"
 // bridges the OpenCode 2 ToolContext to the V1 ToolContext (sessionID,
 // messageID, agent, abort signal, metadata; ask only when OpenCode 2 passes
 // an equivalent - 2.4.1 passes none, so ask stays absent), awaits the V1
-// execute and returns fromV1ToolOutput(result); a V1 throw propagates
-// unchanged and surfaces as the host's tool error state.
+// execute and returns the SDK Tool.Result { output, metadata } (the model
+// reads the output string); a V1 throw propagates unchanged and surfaces as
+// the host's tool error state.
 
 // Structural mirror of the pinned @opencode/plugin 2.4.1 promise ToolContext
 // (Omit<Tool.Context, "progress" | "cancel"> plus signal and progress). The
@@ -69,10 +69,17 @@ export type V1ToolDefinitionMirror = {
   readonly execute: (args: Record<string, unknown>, context: V1ToolExecuteContext) => Promise<V1ExecuteResult>
 }
 
-export type V2ToolExecute = (
-  input: unknown,
-  context: V2ToolExecuteContext,
-) => Promise<{ readonly content: readonly V2ToolContentOut[] }>
+// The REAL SDK Tool.Result of the pinned @opencode/plugin 2.4.1, reached
+// through the root type import (the only allowed @opencode/ type import): the
+// tool domain hook's execute.after event carries `result: Tool.Result` and its
+// completed branch is the completed result shape. Live row L-10 at HEAD
+// a69eaf7234 proved the host stringifies a content array into "[object
+// Object]" when execute returns { content: [...] }, so the model-visible text
+// must ride the SDK `output` string field.
+type ToolHookEvent = Parameters<Parameters<Plugin.Context["tool"]["hook"]>[1]>[0]
+export type SdkToolResult = Extract<ToolHookEvent, { readonly status: "completed" }>["result"]
+
+export type V2ToolExecute = (input: unknown, context: V2ToolExecuteContext) => Promise<SdkToolResult>
 
 export type V2ToolDefinition = {
   readonly name: string
@@ -145,7 +152,13 @@ export function toV2ToolDefinition(name: string, v1: V1ToolDefinitionMirror): V2
     input,
     execute: async (v2Input, context) => {
       const result = await v1.execute(isRecord(v2Input) ? v2Input : {}, v1ContextOf(context))
-      return { content: fromV1ToolOutput(v1OutputOf(result)) }
+      const output = v1OutputOf(result)
+      const metadata = typeof result === "string" ? undefined : result.metadata
+      return {
+        output,
+        content: [{ type: "text" as const, text: output }],
+        ...(metadata === undefined ? {} : { metadata }),
+      }
     },
   }
 }
