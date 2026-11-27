@@ -10,19 +10,21 @@
 # {"status":"error","content":null,"error":{"type":"unknown","message":...}}
 # with the V1 guard message byte-for-byte, and the cleanup stats lines are
 # present in serve.out. Coverage:
-#   good live run    L-01/L-02/L-03/L-07/L-08/L-09/L-11/L-20/L-21/L-22/L-24
+#   good live run    L-01/L-02/L-03/L-04/L-07/L-08/L-09/L-11/L-20/L-21/L-22/L-24
 #                    PASS (the stub models the registered state: the agents
-#                    captures derive from the V1 baseline fixtures and the
-#                    main scenario A request carries the sisyphus system
-#                    first line), L-15/L-18 pending
+#                    captures derive from the V1 baseline fixtures, the main
+#                    scenario A request carries the sisyphus system first line
+#                    and the registered tool set minus the disabled_tools
+#                    entry), L-05/L-06/L-23/L-15/L-18 pending
 #   good post run    L-15 PASS (ambient sessions tolerated; absent system
 #                    opencode = version clause not applicable), L-11 PASS
-#                    (stats line, translated > 0), L-24 PASS (bound holds)
+#                    (stats line, translated > 0), L-24 PASS (bound holds),
+#                    L-10 PASS (scripted grep call, string result), L-16 PASS
+#                    (disabled_tools entry across the host config change)
 #   broken runs      one targeted mutation per FAIL case (see the case list
-#                    in main) plus the L-08 full-strength PASS case, the
-#                    L-15 absent-opencode PASS case (with its evidence line)
-#                    and the L-15 version-changed FAIL case, and the L-22
-#                    process-wide STOP verdict
+#                    in main) plus the L-15 absent-opencode PASS case (with
+#                    its evidence line), the L-15 version-changed FAIL case
+#                    and the L-22 process-wide STOP verdict
 #   driver tests     truthful final line, --strict gate, L-18 verdict
 #                    write-back, bun/ junk guard, reload-for-stats trigger
 #                    (step 1, step 2, never) (driver sourced in import mode;
@@ -195,21 +197,54 @@ LOG
 LOG
   # The registered state: the main scenario A request (tools non-empty)
   # carries the default agent's (sisyphus) system first line as the developer
-  # content; the aux request keeps the host placeholder.
-  local sisyphus_line
+  # content and the registered tool set derived from the V1 baseline fixture
+  # (host-only names and the disabled_tools entry excluded); the aux request
+  # keeps the host placeholder.
+  printf '%s\n' '{ "[opencode]": { "disabled_tools": ["look_at"] } }' > "$dir/omo.jsonc"
+  local sisyphus_line tools_json
   sisyphus_line="$(oqa_st_sisyphus_first_line)"
-  jq -n --arg line "$sisyphus_line" -c '({
+  jq -c '[.tools | map({key: .id, value: {type: "function", name: .id, parameters: .parameters}}) | from_entries | to_entries[].value]
+    | map(select((.name | IN("bash", "read", "write", "question", "todowrite", "webfetch", "invalid", "look_at")) | not))' \
+    "$FIXTURES_ROOT/tools.json" > "$dir/req-a/tools.json"
+  tools_json="$(cat "$dir/req-a/tools.json")"
+  jq -n --arg line "$sisyphus_line" --argjson tools "$tools_json" '({
     model: "gpt-fake",
     input: [
       {type: "message", role: "developer", content: $line},
       {type: "message", role: "user", content: [{type: "input_text", text: "Reply with exactly: OQA_A_FINAL"}]}
     ],
-    tools: [{type: "function", name: "read"}]
+    tools: $tools
   }), ({
     model: "gpt-fake",
     input: [{type: "message", role: "developer", content: "You are a host default agent prompt."}],
     tools: []
-  })' > "$dir/req-a/requests.jsonl"
+  })' -c > "$dir/req-a/requests.jsonl"
+  # L-10 (scenario d): the scripted grep function_call with its V1-shaped
+  # string function_call_output.
+  mkdir -p "$dir/req-d" "$dir/req-e"
+  jq -n --arg out "Found 1 match
+$dir/proj-a/parity-file.txt:1: parity row nine file" -c '({
+    model: "gpt-fake",
+    input: [
+      {type: "message", role: "user", content: [{type: "input_text", text: "Search the project for the word parity"}]},
+      {type: "function_call", name: "grep", call_id: "call_grep_stub", arguments: "{\"pattern\":\"parity\"}"},
+      {type: "function_call_output", call_id: "call_grep_stub", output: $out}
+    ],
+    tools: []
+  })' > "$dir/req-d/requests.jsonl"
+  # L-16 (scenario e): the tool capture after the host config change, same
+  # disabled_tools effect as scenario a.
+  jq -n --argjson tools "$tools_json" -c '({
+    model: "gpt-fake",
+    input: [
+      {type: "message", role: "developer", content: "You are a host default agent prompt."},
+      {type: "message", role: "user", content: [{type: "input_text", text: "Reply with exactly: OQA_E_FINAL"}]}
+    ],
+    tools: $tools
+  })' > "$dir/req-e/requests.jsonl"
+  cat > "$dir/req-b/requests.jsonl" <<'JSONL'
+{"model":"gpt-fake","input":[{"type":"message","role":"developer","content":"You are a host default agent prompt."},{"type":"message","role":"user","content":[{"type":"input_text","text":"Read parity-file.txt"}]}],"tools":[{"type":"function","name":"read"}]}
+JSONL
   cat > "$dir/events-a.sse" <<'SSE'
 data: {"type":"session.created","data":{"sessionID":"ses_stub_a"}}
 
@@ -262,7 +297,9 @@ SSE
   "scenarios": {
     "a": {"sessionID": "ses_stub_a", "prompt": "Reply with exactly: OQA_A_FINAL", "requestsFile": "$dir/req-a/requests.jsonl", "eventsFile": "$dir/events-a.sse", "directory": "$dir/proj-a"},
     "b": {"sessionID": "ses_stub_b", "prompt": "Read parity-file.txt", "requestsFile": "$dir/req-b/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a"},
-    "c": {"sessionID": "ses_stub_c", "prompt": "Run cat", "requestsFile": "$dir/req-b/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a", "file": "$dir/proj-a/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n"}
+    "c": {"sessionID": "ses_stub_c", "prompt": "Run cat", "requestsFile": "$dir/req-b/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a", "file": "$dir/proj-a/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n"},
+    "d": {"sessionID": "ses_stub_d", "prompt": "Search the project for the word parity", "requestsFile": "$dir/req-d/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a", "file": "$dir/proj-a/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n"},
+    "e": {"sessionID": "ses_stub_e", "prompt": "Reply with exactly: OQA_E_FINAL", "requestsFile": "$dir/req-e/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a"}
   },
   "locations": [
     {"name": "serve", "directory": "$dir/serve"},
@@ -274,8 +311,9 @@ SSE
   "agentsBeforeFile": "$dir/agents-before.json",
   "agentsAfterFile": "$dir/agents-after.json",
   "hotAgentId": "oqa-hot-agent",
+  "sandboxOmoConfig": "$dir/omo.jsonc",
   "sandboxPath": "$dir/sandbox-gone",
-  "scriptedSteps": {"a": 1, "b": 2, "c": 2}
+  "scriptedSteps": {"a": 1, "b": 2, "c": 2, "d": 2, "e": 1}
 }
 JSON
   mkdir -p "$dir/sandbox-gone-kept"
@@ -288,13 +326,16 @@ JSON
   "scenarios": {
     "a": {"sessionID": "ses_stub_a", "prompt": "Reply with exactly: OQA_A_FINAL", "requestsFile": "$dir/req-a/requests.jsonl", "eventsFile": "$dir/events-a.sse", "directory": "$dir/proj-a"},
     "b": {"sessionID": "ses_stub_b", "prompt": "Read parity-file.txt", "requestsFile": "$dir/req-b/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a"},
-    "c": {"sessionID": "ses_stub_c", "prompt": "Run cat", "requestsFile": "$dir/req-b/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a", "file": "$dir/proj-a/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n"}
+    "c": {"sessionID": "ses_stub_c", "prompt": "Run cat", "requestsFile": "$dir/req-b/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a", "file": "$dir/proj-a/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n"},
+    "d": {"sessionID": "ses_stub_d", "prompt": "Search the project for the word parity", "requestsFile": "$dir/req-d/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a", "file": "$dir/proj-a/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n"},
+    "e": {"sessionID": "ses_stub_e", "prompt": "Reply with exactly: OQA_E_FINAL", "requestsFile": "$dir/req-e/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a"}
   },
   "locations": [],
   "pluginFileLog": "$dir/plugin-file.log",
   "agentsBeforeFile": "$dir/agents-before.json",
   "agentsAfterFile": "$dir/agents-after.json",
   "hotAgentId": "oqa-hot-agent",
+  "sandboxOmoConfig": "$dir/omo.jsonc",
   "sandboxPath": "$dir/sandbox-gone",
   "isolation": {
     "systemVersionBefore": "1.19.4",
@@ -331,21 +372,24 @@ main() {
   local good="$TMP/good"
   write_good_dir "$good"
 
-  # 1. all-good live phase: executed rows PASS, L-15/L-18 pending
+  # 1. all-good live phase: executed rows PASS, pending rows stay pending
   start_stub "$good" || { oqa_st_fail "stub did not start"; return 1; }
   run_runner "$good" "$good/manifest.json" "$good/out-live" || true
   local results="$good/out-live/results.json"
-  for row in L-01 L-02 L-03 L-07 L-08 L-09 L-11 L-20 L-21 L-22 L-24; do
+  for row in L-01 L-02 L-03 L-04 L-07 L-08 L-09 L-11 L-20 L-21 L-22 L-24; do
     expect_row "$results" "$row" "true" "good live"
   done
   expect_row "$results" "L-15" "pending" "good live"
   expect_row "$results" "L-18" "pending" "good live"
 
-  # 2. all-good post phase: L-15 PASS (ambient tolerated), L-11/L-24 PASS
+  # 2. all-good post phase: L-15 PASS (ambient tolerated), L-11/L-24 PASS,
+  #    L-10 (scripted grep call) and L-16 (disabled_tools) PASS
   run_runner "$good" "$good/post-manifest.json" "$good/out-live" "--post" || true
   expect_row "$good/out-live/results.json" "L-15" "true" "good post"
   expect_row "$good/out-live/results.json" "L-11" "true" "good post"
   expect_row "$good/out-live/results.json" "L-24" "true" "good post"
+  expect_row "$good/out-live/results.json" "L-10" "true" "good post"
+  expect_row "$good/out-live/results.json" "L-16" "true" "good post"
 
   # 3. broken case per strictened check (targeted row must FAIL).
   #    post=1 runs live then post so the cleanup-stats gates are evaluated.
@@ -384,6 +428,29 @@ main() {
     "jq '(.data[] | select(.id == \"sisyphus\") | .system) |= (.[0:8] + \"XX\" + .[10:])' '$TMP/case-L-03-after-prompt-byte-mutated/agents-after.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-03-after-prompt-byte-mutated/agents-after.json'"
   broken_case "L-03" "after-capture-missing" \
     "jq 'del(.agentsAfterFile)' '$TMP/case-L-03-after-capture-missing/manifest.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-03-after-capture-missing/manifest.json'"
+
+  # L-04 FAIL cases: a baseline plugin tool dropped from the capture, and a
+  # JSON Schema drift on a registered tool.
+  broken_case "L-04" "tool-dropped" \
+    "jq -c 'if has(\"tools\") and (.tools | type) == \"array\" then .tools |= map(select(.name != \"skill\")) else . end' '$TMP/case-L-04-tool-dropped/req-a/requests.jsonl' > '$TMP/x.jsonl' && mv '$TMP/x.jsonl' '$TMP/case-L-04-tool-dropped/req-a/requests.jsonl'"
+  broken_case "L-04" "schema-drift" \
+    "jq -c 'if has(\"tools\") and (.tools | type) == \"array\" then .tools |= map(if .name == \"grep\" then .parameters.type = \"string\" else . end) else . end' '$TMP/case-L-04-schema-drift/req-a/requests.jsonl' > '$TMP/x.jsonl' && mv '$TMP/x.jsonl' '$TMP/case-L-04-schema-drift/req-a/requests.jsonl'"
+
+  # L-10 FAIL cases (post phase): the function_call gone, and a result text
+  # that is not the V1-shaped grep output.
+  broken_case "L-10" "call-missing" \
+    "jq -c '.input |= map(select(.type != \"function_call\"))' '$TMP/case-L-10-call-missing/req-d/requests.jsonl' > '$TMP/x.jsonl' && mv '$TMP/x.jsonl' '$TMP/case-L-10-call-missing/req-d/requests.jsonl'" 1
+  broken_case "L-10" "output-text-drift" \
+    "jq -c '(.input[] | select(.type == \"function_call_output\") | .output) |= \"unrelated text\"' '$TMP/case-L-10-output-text-drift/req-d/requests.jsonl' > '$TMP/x.jsonl' && mv '$TMP/x.jsonl' '$TMP/case-L-10-output-text-drift/req-d/requests.jsonl'" 1
+
+  # L-16 FAIL cases (post phase): the disabled probe visible in the after
+  # capture, the control tool gone, and the after scenario missing entirely.
+  broken_case "L-16" "after-disabled-visible" \
+    "jq -c '.tools += [{type: \"function\", name: \"look_at\"}]' '$TMP/case-L-16-after-disabled-visible/req-e/requests.jsonl' > '$TMP/x.jsonl' && mv '$TMP/x.jsonl' '$TMP/case-L-16-after-disabled-visible/req-e/requests.jsonl'" 1
+  broken_case "L-16" "after-control-missing" \
+    "jq -c '.tools |= map(select(.name != \"grep\"))' '$TMP/case-L-16-after-control-missing/req-e/requests.jsonl' > '$TMP/x.jsonl' && mv '$TMP/x.jsonl' '$TMP/case-L-16-after-control-missing/req-e/requests.jsonl'" 1
+  broken_case "L-16" "after-scenario-missing" \
+    "jq 'del(.scenarios.e)' '$TMP/case-L-16-after-scenario-missing/post-manifest.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-16-after-scenario-missing/post-manifest.json'" 1
 
   broken_case "L-09" "read-tag-missing" \
     "oqa_st_write_ctx_b_notag '$TMP/case-L-09-read-tag-missing'"

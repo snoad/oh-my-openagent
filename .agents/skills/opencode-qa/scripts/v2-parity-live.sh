@@ -400,12 +400,13 @@ oqa_pl_main() {
 
   oqa_pl_capture_real_env
   oqa_v2_mk_sandbox || return 1
-  # The unified omo user config turns hashline on under the LITERAL bracketed
+  # The unified omo user config turns hashline on and disables one non-default
+  # plugin tool (look_at) for live row L-16; both ride the LITERAL bracketed
   # "[opencode]" harness block; top-level and unbracketed "opencode" spellings
   # are rejected by the config-migration validation (observed on 2.4.1).
   local omo_cfg="$OQA_V2_SANDBOX/home/.omo/omo.jsonc"
   mkdir -p "$(dirname "$omo_cfg")"
-  printf '%s\n' '{ "[opencode]": { "hashline_edit": true } }' > "$omo_cfg"
+  printf '%s\n' '{ "[opencode]": { "hashline_edit": true, "disabled_tools": ["look_at"] } }' > "$omo_cfg"
   oqa_pl_log "sandbox omo config written: $omo_cfg"
   local plugin_dir cfg_dir cfg_body
   plugin_dir="${OQA_V2_PLUGIN_DIR:-$REPO_ROOT}"
@@ -562,6 +563,21 @@ JSON
   oqa_pl_log "triggering the plugin reload so the previous runtimes emit their stats lines..."
   oqa_pl_reload_for_stats "$OQA_V2_SANDBOX/serve.out" "$cfg_dir/opencode.json" "$cfg_body" || true
 
+  local sid_d="" sid_e="" st_post
+  for i in $(seq 1 60); do
+    st_post="$(oqa_v2_api GET /api/plugin 2>/dev/null | jq -r --arg id "${OQA_V2_PLUGIN_ID:-oh-my-openagent}" '.data[] | select(.id == $id) | .state.status' 2>/dev/null)"
+    [ "$st_post" = "active" ] && break
+    kill -0 "$OQA_V2_SERVER_PID" 2>/dev/null || break
+    sleep 1
+  done
+  printf '%s\n' "{\"steps\":[{\"tool_call\":{\"name\":\"grep\",\"arguments\":{\"pattern\":\"parity\",\"path\":\"$PROJ_DIR\"}}},{\"text\":\"OQA_D_FINAL done grepping\"}]}" > "$WORK_DIR/scenario-d.json"
+  printf '%s\n' '{"steps":[{"text":"OQA_E_FINAL plain"}]}' > "$WORK_DIR/scenario-e.json"
+  mkdir -p "$WORK_DIR/req-d" "$WORK_DIR/req-e"
+  oqa_pl_start_fake "$WORK_DIR/scenario-d.json" "$WORK_DIR/req-d" || true
+  oqa_pl_run_once d "v2 parity d" "Search the project for the word parity with grep and reply with the exact result" "$PROJ_DIR" && sid_d="$OQA_PL_SID" || true
+  oqa_pl_start_fake "$WORK_DIR/scenario-e.json" "$WORK_DIR/req-e" || true
+  oqa_pl_run_once e "v2 parity e" "Reply with exactly: OQA_E_FINAL" "$PROJ_DIR" && sid_e="$OQA_PL_SID" || true
+
   # ---- shutdown, post-shutdown log copies, teardown, post phase ----
   oqa_v2_serve_stop
   sleep 1
@@ -614,7 +630,9 @@ JSON
   "scenarios": {
     "a": { "sessionID": "$sid_a", "prompt": "Reply with exactly: OQA_A_FINAL", "requestsFile": "$WORK_DIR/req-a/requests.jsonl", "eventsFile": "$WORK_DIR/a.events.sse", "directory": "$PROJ_DIR" },
     "b": { "sessionID": "$sid_b", "prompt": "Read parity-file.txt and reply with its exact content", "requestsFile": "$WORK_DIR/req-b/requests.jsonl", "eventsFile": "$WORK_DIR/b.events.sse", "directory": "$PROJ_DIR" },
-    "c": { "sessionID": "$sid_c", "prompt": "Run cat", "requestsFile": "$WORK_DIR/req-c/requests.jsonl", "eventsFile": "$WORK_DIR/c.events.sse", "directory": "$PROJ_DIR", "file": "$PROJ_DIR/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n" }
+    "c": { "sessionID": "$sid_c", "prompt": "Run cat", "requestsFile": "$WORK_DIR/req-c/requests.jsonl", "eventsFile": "$WORK_DIR/c.events.sse", "directory": "$PROJ_DIR", "file": "$PROJ_DIR/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n" },
+    "d": { "sessionID": "$sid_d", "prompt": "Search the project for the word parity with grep", "requestsFile": "$WORK_DIR/req-d/requests.jsonl", "eventsFile": "$WORK_DIR/d.events.sse", "directory": "$PROJ_DIR", "file": "$PROJ_DIR/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n" },
+    "e": { "sessionID": "$sid_e", "prompt": "Reply with exactly: OQA_E_FINAL", "requestsFile": "$WORK_DIR/req-e/requests.jsonl", "eventsFile": "$WORK_DIR/e.events.sse", "directory": "$PROJ_DIR" }
   },
   "locations": [],
   "pluginFileLog": "$EV_LIVE/plugin-file.log",

@@ -31,7 +31,10 @@ export type RowPass = true | false | "partial" | "pending" | "stop"
 export type RowResult = { row: string; wave: number; pass: RowPass; owner?: string; evidence: string; summary: string }
 
 // Rows re-evaluated in the post phase against the post-shutdown log copies.
-const POST_PHASE_ROWS = new Set(["L-15", "L-11", "L-24"])
+// L-10 and L-16 read the scenario d/e captures that exist only after the
+// plugin reload (the host config change), so they are post-phase-only.
+const POST_PHASE_ROWS = new Set(["L-15", "L-11", "L-24", "L-10", "L-16"])
+const POST_ONLY_ROWS = new Set(["L-10", "L-16"])
 
 function verdictLabel(pass: RowPass): string {
   return pass === true ? "PASS" : pass === false ? "FAIL" : String(pass).toUpperCase()
@@ -105,6 +108,12 @@ async function runChecks(ctx: LiveCheckContext, post: boolean): Promise<RowResul
         pass: "pending",
         summary: "L-15 runs in the post phase after teardown",
         evidence: "L-15 pending: the isolation and sandbox-removal check runs after the driver stopped the server.\n",
+      }
+    } else if (!post && POST_ONLY_ROWS.has(row.id)) {
+      outcome = {
+        pass: "pending",
+        summary: `${row.id} runs in the post phase after the host-config-change captures`,
+        evidence: `${row.id} pending: the scenario d/e captures exist only after the plugin reload.\n`,
       }
     } else if (post || liveRowShouldExecute(row, ctx.wave)) {
       try {

@@ -4,6 +4,9 @@ import { checkNoPluginLoadError, checkPluginActive, checkPluginActiveWithin60s }
 import { checkAgents } from "./live-checks-agents"
 import { checkChatMessageAdmission, checkSystemTransform } from "./live-checks-session"
 import { checkToolHooks } from "./live-check-tool-hooks"
+import { checkToolRegistrationParity } from "./live-checks-tools"
+import { checkPluginGrepCall } from "./live-checks-tools-grep"
+import { checkDisabledToolsEffect } from "./live-checks-tools-disabled"
 import { checkEventPipeline, checkTranslatorBudget } from "./live-checks-events"
 import { checkHostNotice, checkLocationEngines } from "./live-checks-host"
 import { checkIsolation } from "./live-checks-isolation"
@@ -17,11 +20,14 @@ const CHECKS: Readonly<Record<string, LiveCheck>> = {
   "L-01": checkPluginActive,
   "L-02": checkNoPluginLoadError,
   "L-03": checkAgents,
+  "L-04": checkToolRegistrationParity,
   "L-07": checkChatMessageAdmission,
   "L-08": checkSystemTransform,
   "L-09": checkToolHooks,
+  "L-10": checkPluginGrepCall,
   "L-11": checkEventPipeline,
   "L-15": checkIsolation,
+  "L-16": checkDisabledToolsEffect,
   "L-20": checkPluginActiveWithin60s,
   "L-21": checkHostNotice,
   "L-22": checkLocationEngines,

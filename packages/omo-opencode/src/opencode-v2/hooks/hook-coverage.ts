@@ -103,7 +103,10 @@ const COVERAGE_LEDGER_KEYS: readonly V2HookCoverageEntry[] = [
   REACHABLE_4("teamMailboxInjector", "config-gated team transform, wave-4 suite"),
   REACHABLE_4("teamModeStatusInjector", "config-gated team transform, wave-4 suite"),
   REACHABLE_4("teamToolGating", "team tool gate, wave-4 suite"),
-  REACHABLE_4("todoDescriptionOverride", "tool.definition surface, wave-4 suite"),
+  REACHABLE_3(
+    "todoDescriptionOverride",
+    "tool.definition surface: the task-25 snippet refresh calls it once per visible tool",
+  ),
   REACHABLE_4("toolOutputTruncator", "tool.execute.after surface, wave-4 suite"),
   REACHABLE_4("toolPairValidator", "messages.transform surface, wave-4 suite"),
   REACHABLE_4("ulwExecute", "chat.message surface, wave-4 suite"),
