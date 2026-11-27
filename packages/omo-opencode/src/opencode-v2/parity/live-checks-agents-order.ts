@@ -34,6 +34,15 @@ export function contextAgentsOf(body: unknown): string[] {
   return [...agents]
 }
 
+// The omo-model-core ref is an in-process sha256 handle over the plugin's
+// native prompt context (agents/native-prompt-frame.ts: the model rebuilds
+// the system prompt in the same process), so two host instances can never
+// produce the same ref for identical bytes. Prompt byte equality normalizes
+// it away.
+export function normalizePromptRef(prompt: string): string {
+  return prompt.replace(/<omo-model-core ref="[0-9a-f]{16}">/, '<omo-model-core ref="">')
+}
+
 function strictlyAscending(positions: ReadonlyArray<number>): boolean {
   return [...positions].every((position, index) => index === 0 || position > positions[index - 1])
 }

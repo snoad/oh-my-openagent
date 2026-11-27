@@ -165,6 +165,87 @@
       }
     },
     {
+      "id": "edit",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "delete": {
+            "description": "Delete file instead of editing",
+            "type": "boolean"
+          },
+          "edits": {
+            "description": "Array of edit operations to apply (empty when delete=true)",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "end": {
+                  "description": "Range end anchor in LINE#ID format",
+                  "type": "string"
+                },
+                "lines": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Replacement or inserted lines as newline-delimited string. null deletes with replace"
+                },
+                "op": {
+                  "anyOf": [
+                    {
+                      "const": "replace",
+                      "type": "string"
+                    },
+                    {
+                      "const": "append",
+                      "type": "string"
+                    },
+                    {
+                      "const": "prepend",
+                      "type": "string"
+                    }
+                  ],
+                  "description": "Hashline edit operation mode"
+                },
+                "pos": {
+                  "description": "Primary anchor in LINE#ID format",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "op",
+                "lines"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "filePath": {
+            "description": "Absolute path to the file to edit",
+            "type": "string"
+          },
+          "rename": {
+            "description": "Rename output file path after edits",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filePath",
+          "edits"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "id": "glob",
       "parameters": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -296,44 +377,6 @@
         "required": [
           "tool",
           "error"
-        ],
-        "type": "object"
-      }
-    },
-    {
-      "id": "look_at",
-      "parameters": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "properties": {
-          "file_path": {
-            "description": "Absolute path to the file to analyze",
-            "type": "string"
-          },
-          "file_paths": {
-            "description": "Absolute paths to the files to analyze",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "goal": {
-            "description": "What specific information to extract from the file",
-            "type": "string"
-          },
-          "image_data": {
-            "description": "Base64 encoded image data (for clipboard/pasted images)",
-            "type": "string"
-          },
-          "image_data_list": {
-            "description": "Base64 encoded image data entries (for multiple clipboard/pasted images)",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "goal"
         ],
         "type": "object"
       }

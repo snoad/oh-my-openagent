@@ -21,11 +21,17 @@
 #                      sorted by id, key order normalized (jq -S)
 #
 # Baseline environment notes (documented on purpose):
-#   - The sandbox has no provider keys, so model resolution drops the atlas
-#     agent entirely. The user-layer omo config ($HOME/.omo/omo.jsonc inside
-#     the sandbox, the ONLY config the plugin reads; the legacy
+#   - The sandbox presents the SAME model universe the live OpenCode 2 parity
+#     driver presents: default model openai/gpt-fake plus an openai provider
+#     block defining gpt-fake (baseURL points at a closed port; the capture
+#     only reads GET /agent and GET /experimental/tool, no model request is
+#     made). Byte equality between the V1 and V2 captures is only meaningful
+#     when both captures resolve the same model universe; with no model
+#     configured the V1 prompts embed the requirement-chain heads instead.
+#   - The user-layer omo config ($HOME/.omo/omo.jsonc inside the sandbox, the
+#     ONLY config the plugin reads; the legacy
 #     $XDG_CONFIG_HOME/opencode/oh-my-openagent.json is not read) pins
-#     agents.atlas.model so all 11 omo agents register.
+#     agents.atlas.model exactly like the live driver.
 #   - interactive_bash appears only when tmux is on PATH -> marked
 #     envDependent in tools.json.
 #   - V1 agent `permission` arrays embed absolute sandbox paths, so
@@ -105,9 +111,33 @@ oqa_v1b_capture() {
 
   oqa_mk_isolated_xdg || return 1
   mkdir -p "$HOME/.omo"
-  printf '{"agents":{"atlas":{"model":"anthropic/claude-sonnet-5"}}}\n' > "$HOME/.omo/omo.jsonc"
+  # The omo config the live driver writes: the atlas model override plus the
+  # plugin harness keys (hashline edit on, look_at disabled) so the pipeline
+  # embeds the same tool list the live host embeds.
+  cat > "$HOME/.omo/omo.jsonc" <<'JSON'
+{
+  "agents": { "atlas": { "model": "anthropic/claude-sonnet-5" } },
+  "[opencode]": { "hashline_edit": true, "disabled_tools": ["look_at"] }
+}
+JSON
   mkdir -p "$XDG_CONFIG_HOME/opencode"
-  printf '{\n  "plugin": ["file://%s"]\n}\n' "$REPO_ROOT" > "$XDG_CONFIG_HOME/opencode/opencode.jsonc"
+  # The model universe of the live OpenCode 2 parity driver (default model
+  # openai/gpt-fake and its provider block); the baseURL is never dialed
+  # during the capture (GET /agent + GET /experimental/tool only).
+  cat > "$XDG_CONFIG_HOME/opencode/opencode.jsonc" <<JSON
+{
+  "model": "openai/gpt-fake",
+  "plugin": ["file://$REPO_ROOT"],
+  "provider": {
+    "openai": {
+      "options": { "apiKey": "fake-key", "baseURL": "http://127.0.0.1:9/v1" },
+      "models": {
+        "gpt-fake": { "tool_call": true, "limit": { "context": 200000, "output": 8192 } }
+      }
+    }
+  }
+}
+JSON
 
   local neutral="$OQA_XDG_ROOT/neutral"
   mkdir -p "$neutral"

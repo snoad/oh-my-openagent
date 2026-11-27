@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs"
 
-import { contextAgentsOf, fixtureIdentityLine, orderProblems } from "./live-checks-agents-order"
+import { contextAgentsOf, fixtureIdentityLine, normalizePromptRef, orderProblems } from "./live-checks-agents-order"
 
 import {
   fail,
@@ -17,9 +17,9 @@ import {
 // set, the per-agent mode/hidden flags and the built-in demotion against
 // fixtures/v1-baseline/agents.json (display names only for the plugin
 // agents: the pipeline output carries no name for host-owned built-ins),
-// byte equality of every system prompt against agent-prompts.json, and the
-// default agent through scenario A's request body plus the session agent
-// surface. Order is the LIM-13 reduced guarantee (live-checks-agents-order).
+// byte equality (minus the per-process model-core ref) of every system
+// prompt against agent-prompts.json, and the default agent through scenario
+// A's request body plus the session agent surface. Order is LIM-13.
 
 type BaselineRow = { id: string; name: string; mode: string; hidden: unknown; native?: unknown }
 type CapturedAgent = {
@@ -110,7 +110,7 @@ function captureProblems(
     else if (prompt === null) {
       if (typeof item.system === "string")
         problems.push(`${label}: ${row.id} carries a system prompt although the baseline has none`)
-    } else if (item.system !== prompt)
+    } else if (normalizePromptRef(typeof item.system === "string" ? item.system : "") !== normalizePromptRef(prompt))
       problems.push(`${label}: ${row.id} system prompt bytes differ from the baseline fixture`)
   }
   return problems
