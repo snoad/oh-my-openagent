@@ -12,16 +12,20 @@
 // identity line (the host recomputes the omo-model-core ref hash for the live
 // model, so the fixture's first line can never match the request bytes).
 
+import { readFileSync } from "node:fs"
+
+import { readRequestBodies } from "./live-check-context"
+
 const PRIMARY_ORDER = ["sisyphus", "hephaestus", "prometheus", "atlas"] as const
 
 const OMO_ORDER = ["sisyphus", "hephaestus", "prometheus", "atlas", "metis", "momus", "sisyphus-junior"]
 
-export function fixtureIdentityLine(prompt: string): string {
+function fixtureIdentityLine(prompt: string): string {
   const afterModel = prompt.split("</omo-model-core>")[1] ?? prompt
   return afterModel.split("\n").find((line) => line.startsWith('You are "')) ?? ""
 }
 
-export function contextAgentsOf(body: unknown): string[] {
+function contextAgentsOf(body: unknown): string[] {
   if (body === null || typeof body !== "object") return []
   const data = (body as { data?: unknown }).data
   if (!Array.isArray(data)) return []
@@ -32,6 +36,49 @@ export function contextAgentsOf(body: unknown): string[] {
     if (typeof agent === "string" && agent !== "") agents.add(agent)
   }
   return [...agents]
+}
+
+// The default-agent proof (plan task 24): scenario A's request body carries
+// the fixture body's identity line and the session context (manifest
+// contextAFile, fetched while the server was alive) carries agent sisyphus.
+// The host recomputes the omo-model-core ref hash for the live model, so the
+// fixture's first line can never match the request bytes.
+export function defaultAgentProblems(
+  manifest: { readonly contextAFile?: string },
+  sisyphusPrompt: string,
+  requestsFile: string | undefined,
+): { readonly problems: string[]; readonly evidence: string[] } {
+  const problems: string[] = []
+  const evidence: string[] = []
+  const bodies = requestsFile === undefined ? [] : readRequestBodies(requestsFile)
+  const mainRequest = bodies.find((body) => body.includes('"tools":[{') || body.includes('"tools": [{'))
+  const identityLine = fixtureIdentityLine(sisyphusPrompt)
+  const identityEscaped = JSON.stringify(identityLine).slice(1, -1)
+  const requestProvesSisyphus =
+    mainRequest !== undefined &&
+    identityLine !== "" &&
+    (mainRequest.includes(identityLine) || mainRequest.includes(identityEscaped))
+  let contextBody: unknown = undefined
+  if (manifest.contextAFile !== undefined) {
+    try {
+      contextBody = JSON.parse(readFileSync(manifest.contextAFile, "utf8")) as unknown
+    } catch {
+      contextBody = undefined
+    }
+  }
+  const sessionAgents = contextAgentsOf(contextBody)
+  const contextProvesSisyphus = sessionAgents.includes("sisyphus")
+  if (manifest.contextAFile === undefined)
+    problems.push("default: the manifest carries no contextAFile; the session surface is unproven")
+  if (!requestProvesSisyphus)
+    problems.push("default: scenario A's request does not carry the sisyphus system body (ref is per-model)")
+  if (!contextProvesSisyphus)
+    problems.push(`default: scenario A's session ran under: ${sessionAgents.join(",") || "(none)"}, not sisyphus`)
+  evidence.push(
+    `default agent proven through scenario A's request developer content: ${requestProvesSisyphus}`,
+    `default agent proven through scenario A's session agent surface: ${contextProvesSisyphus} (agents: ${sessionAgents.join(",") || "none"})`,
+  )
+  return { problems, evidence }
 }
 
 // The omo-model-core ref is an in-process sha256 handle over the plugin's

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs"
 
-import { contextAgentsOf, fixtureIdentityLine, normalizePromptRef, orderProblems } from "./live-checks-agents-order"
+import { defaultAgentProblems, normalizePromptRef, orderProblems } from "./live-checks-agents-order"
 
 import {
   fail,
@@ -16,10 +16,10 @@ import {
 // host equals the V1 baseline agent set. The check asserts the ordered id
 // set, the per-agent mode/hidden flags and the built-in demotion against
 // fixtures/v1-baseline/agents.json (display names only for the plugin
-// agents: the pipeline output carries no name for host-owned built-ins),
-// byte equality (minus the per-process model-core ref) of every system
-// prompt against agent-prompts.json, and the default agent through scenario
-// A's request body plus the session agent surface. Order is LIM-13.
+// agents), byte equality (minus the per-process model-core ref) of every
+// pipeline-authored prompt against agent-prompts.json (the hidden host
+// built-ins keep their host-owned bytes: LIM-23), and the default agent
+// through scenario A's request body plus the session surface (order LIM-13).
 
 type BaselineRow = { id: string; name: string; mode: string; hidden: unknown; native?: unknown }
 type CapturedAgent = {
@@ -84,6 +84,7 @@ function captureProblems(
   capture: Map<string, CapturedAgent>,
   baseline: BaselineRow[],
   prompts: Record<string, string | null>,
+  evidence: string[],
 ): string[] {
   const problems: string[] = []
   const seen = new Set<string>()
@@ -110,8 +111,11 @@ function captureProblems(
     else if (prompt === null) {
       if (typeof item.system === "string")
         problems.push(`${label}: ${row.id} carries a system prompt although the baseline has none`)
-    } else if (normalizePromptRef(typeof item.system === "string" ? item.system : "") !== normalizePromptRef(prompt))
-      problems.push(`${label}: ${row.id} system prompt bytes differ from the baseline fixture`)
+    } else if (normalizePromptRef(typeof item.system === "string" ? item.system : "") !== normalizePromptRef(prompt)) {
+      if (row.native === true && row.hidden === true)
+        evidence.push(`${label}: ${row.id} system bytes are host-owned and preserved by the plugin (LIM-23)`)
+      else problems.push(`${label}: ${row.id} system prompt bytes differ from the baseline fixture`)
+    }
   }
   return problems
 }
@@ -146,8 +150,8 @@ export const checkAgents: LiveCheck = async (ctx) => {
   const before = firstById(envelopeData(beforeBody))
   const after = firstById(envelopeData(afterBody))
   const problems = [
-    ...captureProblems("before", before, baseline, prompts),
-    ...captureProblems("after", after, baseline, prompts),
+    ...captureProblems("before", before, baseline, prompts, evidence),
+    ...captureProblems("after", after, baseline, prompts, evidence),
   ]
   const hotId = manifest.hotAgentId
   const hotPresent = hotId === undefined ? false : after.has(hotId)
@@ -163,31 +167,20 @@ export const checkAgents: LiveCheck = async (ctx) => {
   const order = orderProblemsFound.length === 0 ? undefined : orderProblemsFound.join("; ")
   const scenario = scenarioOr(ctx, "a")
   const sisyphusPrompt = prompts["sisyphus"] ?? ""
-  const bodies = scenario === undefined ? [] : readRequestBodies(scenario.requestsFile)
-  const mainRequest = bodies.find((body) => body.includes('"tools":[{') || body.includes('"tools": [{'))
-  const identityLine = fixtureIdentityLine(sisyphusPrompt)
-  const identityEscaped = JSON.stringify(identityLine).slice(1, -1)
-  const requestProvesSisyphus =
-    mainRequest !== undefined &&
-    identityLine !== "" &&
-    (mainRequest.includes(identityLine) || mainRequest.includes(identityEscaped))
-  const contextBody = manifest.contextAFile === undefined ? undefined : readJson(manifest.contextAFile)
-  const sessionAgents = contextAgentsOf(contextBody)
-  const contextProvesSisyphus = sessionAgents.includes("sisyphus")
-  if (contextBody === undefined)
-    problems.push("default: the manifest carries no contextAFile; the session agent surface is unproven")
-  if (!requestProvesSisyphus)
-    problems.push("default: scenario A's request does not carry the sisyphus system body (ref is per-model)")
-  if (!contextProvesSisyphus)
-    problems.push(`default: scenario A's session ran under: ${sessionAgents.join(",") || "(none)"}, not sisyphus`)
+  const defaultAgent = defaultAgentProblems(
+    manifest,
+    sisyphusPrompt,
+    scenario === undefined ? undefined : scenario.requestsFile,
+  )
+  problems.push(...defaultAgent.problems)
+  evidence.push(...defaultAgent.evidence)
   evidence.push(
     `baseline ids: ${[...new Set(baseline.map((row) => row.id))].join(",")}`,
     `captured before ids: ${[...before.keys()].join(",")}`,
     `captured after ids: ${[...after.keys()].join(",")}`,
     `hot agent ${hotId ?? "(none)"} present after the config change: ${hotPresent}`,
     `registered omo order (primaries first): ${order === undefined ? "canonical" : order}`,
-    `default agent proven through scenario A's request developer content: ${requestProvesSisyphus}`,
-    `default agent proven through scenario A's session agent surface: ${contextProvesSisyphus} (agents: ${sessionAgents.join(",") || "none"})`,
+    ...defaultAgent.evidence,
     ...problems,
     "",
   )

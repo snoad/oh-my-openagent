@@ -167,6 +167,22 @@ export const V2_LIMITS: V2Limit[] = [
     },
   },
   {
+    id: "LIM-23",
+    status: "confirmed",
+    is: ["IS-5", "IS-13"],
+    reason:
+      "the system bytes of the hidden host built-ins compaction, summary and title are host-owned: the plugin preserves them (the name_only replay path never writes system), so the live prompts carry the 2.4.1 host's own bytes while the V1 baseline carries the V1 host's own bytes. Captured 20261127 (before+after, task-24-25/live L-03.txt): 6 diff lines, exactly those agents' system bytes; every agent whose prompt the pipeline produces matches the regenerated baseline byte-for-byte minus the per-process model-core ref. Live row L-03 names this limit for each native hidden row instead of printing the diff",
+    apiEvidence: "promise/agent.d.ts#L12-L16",
+    gracefulCheck: () => {
+      const prompts = `${import.meta.dir}/fixtures/v1-baseline/agent-prompts.json`
+      if (!existsSync(prompts)) throw new Error("LIM-23: the captured host prompt bytes are missing")
+      const captured = JSON.parse(readFileSync(prompts, "utf8")) as Record<string, unknown>
+      for (const id of ["compaction", "summary", "title"]) {
+        if (typeof captured[id] !== "string") throw new Error(`LIM-23: no captured host bytes for ${id}`)
+      }
+    },
+  },
+  {
     id: "VL-1",
     status: "candidate",
     is: ["IS-14", "IS-13"],

@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test"
 
 import { createFakeV2Context } from "../parity/fake-v2-context"
 import { mapAgentToV1Config } from "./agent-mapping"
+import { assignAgentItem } from "./agent-v1-to-v2"
 import type { SnapshotAgentRecord } from "./snapshot-inputs"
 
 const fixtureAgents = createFakeV2Context().agent
@@ -97,5 +98,27 @@ describe("agent mapping to V1 AgentConfig", () => {
     // then
     expect(config.tools).toEqual({})
     expect(config.permission).toEqual({})
+  })
+})
+
+describe("assignAgentItem name_only replay", () => {
+  it("#given a name_only entry #when the item is replayed #then the name lands and the host system bytes stay untouched", () => {
+    // given
+    const item = {
+      id: "compaction",
+      name: "Compaction",
+      mode: "primary" as const,
+      hidden: true,
+      system: "the host's own compaction prompt",
+    }
+
+    // when
+    assignAgentItem(item, "compaction", { name_only: true, name: "compaction" })
+
+    // then
+    expect(item.name).toBe("compaction")
+    expect(item.system).toBe("the host's own compaction prompt")
+    expect(item.mode).toBe("primary")
+    expect(item.hidden).toBe(true)
   })
 })
