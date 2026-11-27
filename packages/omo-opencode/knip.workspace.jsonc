@@ -21,6 +21,9 @@
         "src/hooks/prometheus-md-only/fixtures/*.ts",
         // Preloaded by path (`bun --preload <file>`) into the launcher child of state-file-cli.test.ts.
         "src/cli/service-auth/state-file-cli.fixture.ts",
+        // Run by path (`bun <file> --wave <n> --api <url>`) by the opencode-qa live parity drivers
+        // v2-parity-live.sh and lib/v2-live-self-test.sh; nothing imports it.
+        "src/opencode-v2/parity/live-runner.ts",
       ],
       "ignoreFiles": [
         // pre-existing at origin dev 4686e425b5: a file nothing imports or runs

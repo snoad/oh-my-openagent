@@ -36,6 +36,8 @@ export const V2_LIMITS: V2Limit[] = [
     is: ["IS-4", "IS-13"],
     reason:
       "cross-provider model switch requested by a chat.message variant: experimental.model.resolve stays within the provider",
+    apiEvidence:
+      "node_modules/@opencode/plugin/dist/promise/session.d.ts SessionModelResolve: the experimental.model.resolve hook mutates model as a Model.Ref whose providerID names one provider; the host restricts the switch to that provider, so a cross-provider chat.message model request cannot cross (evidence attached by task 16)",
   },
   {
     id: "LIM-4",

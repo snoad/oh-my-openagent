@@ -88,10 +88,13 @@ oqa_v2_ensure_binary || exit 1
 oqa_v2_mk_sandbox() {
   local sb
   sb="$(mktemp -d -t oqa-v2-sandbox.XXXXXX)" || return 1
-  mkdir -p "$sb/home" "$sb/config" "$sb/data" "$sb/cache" "$sb/state" "$sb/tmp" "$sb/bin" || return 1
-  ln -s "$OC2" "$sb/bin/opencode" || return 1
-  ln -s "$OC2" "$sb/bin/opencode2" || return 1
+  # Register BEFORE creating content: any mkdir/ln failure below must still
+  # leave the directory tracked so the EXIT trap removes it (no early-failure
+  # path may leak a sandbox directory).
   OQA_V2_SANDBOXES+=("$sb")
+  mkdir -p "$sb/home" "$sb/config" "$sb/data" "$sb/cache" "$sb/state" "$sb/tmp" "$sb/bin" || { rm -rf "$sb"; return 1; }
+  ln -s "$OC2" "$sb/bin/opencode" || { rm -rf "$sb"; return 1; }
+  ln -s "$OC2" "$sb/bin/opencode2" || { rm -rf "$sb"; return 1; }
   export OQA_V2_SANDBOX="$sb"
   export HOME="$sb/home"
   export XDG_CONFIG_HOME="$sb/config"

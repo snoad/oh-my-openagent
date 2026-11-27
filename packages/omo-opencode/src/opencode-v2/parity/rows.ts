@@ -4,6 +4,16 @@ import { LANDED_WAVES } from "./lan"
 import { hBoundRows } from "./rows-h-bound"
 import { hCliRows } from "./rows-h-cli"
 import { hCodecRows } from "./rows-h-codec"
+import { hEvtIgnoredRows } from "./rows-h-evt-ignored"
+import { hEvtIgnoredToolRows } from "./rows-h-evt-ignored-tool"
+import { hEvtPerformanceRows } from "./rows-h-evt-performance"
+import { hEvtRows } from "./rows-h-evt"
+import { hHookContextRows } from "./rows-h-hook-context"
+import { hHookPromptRows } from "./rows-h-hook-prompt"
+import { hHookRequestRows } from "./rows-h-hook-request"
+import { hHookToolRows } from "./rows-h-hook-tool"
+import { hHookCompactionRows, hOrchRows } from "./rows-h-orch"
+import { hMetaCiRows } from "./rows-h-meta-ci"
 import { hFakeRows } from "./rows-h-fake"
 import { hClientRows, hGateRows } from "./rows-h-client"
 import { hClientMessageRows } from "./rows-h-client-messages"
@@ -156,6 +166,16 @@ export const PARITY_ROWS: ParityRow[] = [
   ...hFakeRows,
   ...hCliRows,
   ...hCodecRows,
+  ...hEvtRows,
+  ...hEvtIgnoredRows,
+  ...hEvtIgnoredToolRows,
+  ...hEvtPerformanceRows,
+  ...hHookRequestRows,
+  ...hHookContextRows,
+  ...hHookPromptRows,
+  ...hHookToolRows,
+  ...hHookCompactionRows,
+  ...hOrchRows,
   ...hClientRows,
   ...hClientMessageRows,
   ...hClientLifecycleRows,
@@ -165,4 +185,5 @@ export const PARITY_ROWS: ParityRow[] = [
   ...hReloadRows,
   ...liveRows,
   ...hMetaRows,
+  ...hMetaCiRows,
 ]

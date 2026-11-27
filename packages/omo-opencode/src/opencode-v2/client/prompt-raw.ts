@@ -26,3 +26,24 @@ function withInternalTag(input: SessionPromptInput): SessionPromptInput {
 export async function admitPrompt(ctx: V2ShimContext, input: SessionPromptInput): Promise<SessionInboxUser> {
   return ctx.session.prompt(withInternalTag(input))
 }
+
+type PromptSessionDomain = { prompt: (input: SessionPromptInput) => Promise<SessionInboxUser> }
+
+const observedDomains = new WeakSet<PromptSessionDomain>()
+
+// Observation half of the same seam (plan task 19): the idle budget counts
+// gate-dispatched admissions, which are exactly the tagged session.prompt
+// calls this module makes. The observer wraps the domain method in place and
+// never dispatches itself; a domain already wrapped is skipped so runtime
+// reloads do not stack observers.
+export function observeShimAdmissions(ctx: V2ShimContext, onAdmission: (input: SessionPromptInput) => void): void {
+  const domain = ctx.session as unknown as PromptSessionDomain
+  if (observedDomains.has(domain)) return
+  observedDomains.add(domain)
+  const original = domain.prompt.bind(domain)
+  domain.prompt = async (input: SessionPromptInput) => {
+    const result = await original(input)
+    onAdmission(input)
+    return result
+  }
+}

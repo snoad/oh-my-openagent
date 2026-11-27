@@ -1,0 +1,77 @@
+name: OpenCode 2 parity
+
+on:
+  pull_request:
+    paths:
+      - 'packages/omo-opencode/**'
+      - 'packages/utils/src/prompt-async-gate*'
+      - '.agents/skills/opencode-qa/**'
+      - '.github/workflows/opencode-v2-parity.yml'
+      - 'package.json'
+      - 'bun.lock'
+  push:
+    branches: [dev, 'feat/opencode-v2**']
+    paths:
+      - 'packages/omo-opencode/**'
+      - 'packages/utils/src/prompt-async-gate*'
+      - '.agents/skills/opencode-qa/**'
+      - '.github/workflows/opencode-v2-parity.yml'
+      - 'package.json'
+      - 'bun.lock'
+  # workflow_dispatch has no paths filter; dispatch runs the parity suite on demand.
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  parity-live:
+    name: Live parity (CI mode)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.4"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Build plugin
+        run: bun run build
+
+      - name: Install tmux and jq
+        run: sudo apt-get update && sudo apt-get install -y tmux jq
+
+      - name: Bootstrap the pinned OpenCode 2 host
+        run: bash .agents/skills/opencode-qa/scripts/v2-bootstrap.sh
+
+      - name: Run the live parity driver (CI mode)
+        run: |
+          bash .agents/skills/opencode-qa/scripts/v2-parity-live.sh --wave "$(bun -e 'console.log((await import("./packages/omo-opencode/src/opencode-v2/parity/lan.ts")).LANDED_WAVES)')" --ci --skip-v1 --no-build
+
+      - name: Upload parity evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: opencode-v2-parity-evidence
+          path: .omo/evidence/**
+          retention-days: 14
+
+      - name: Write job summary
+        if: always()
+        shell: bash
+        env:
+          JOB_SUMMARY_TITLE: OpenCode 2 parity (live)
+          JOB_SUMMARY_STATUS: ${{ job.status }}
+          JOB_SUMMARY_DETAILS: |
+            - Installs dependencies, builds the plugin, and bootstraps the pinned OpenCode 2 host.
+            - Runs the live parity driver in CI mode with `--skip-v1 --no-build` and uploads the evidence.
+          JOB_SUMMARY_NEXT: Download the `opencode-v2-parity-evidence` artifact and read `results.json` plus the row evidence files.
+        run: GITHUB_STEP_SUMMARY="$GITHUB_STEP_SUMMARY" bash .github/scripts/write-job-summary.sh
