@@ -6,12 +6,13 @@
 # plugin equal to the repo root, start the scenario fake model and the
 # sandboxed server, drive scenarios A (plain text), B (read tool), C (shell
 # cat) plus a second-location session and a minimal TUI smoke, run the live
-# runner (V2/parity/live-runner.ts) against the live surfaces, stop the
-# server, copy serve.out and the plugin file log AFTER shutdown (the
-# translator stats lines exist only after cleanup), run the post phase
-# (L-15 plus the cleanup-stats halves of L-11 and L-24), then run
-# v2-v1-regression.sh (L-18) unless --skip-v1 and write its verdict into
-# results.json. Prints the result table; the final line never claims "every
+# runner (V2/parity/live-runner.ts) against the live surfaces, trigger the
+# plugin reload so the previous runtimes stop and emit their "[opencode-v2]
+# event stats " lines (the host hard-exits at shutdown and never runs plugin
+# cleanup), stop the server, copy serve.out and the plugin file log AFTER
+# shutdown, run the post phase (L-15 plus the cleanup-stats halves of L-11
+# and L-24), then run v2-v1-regression.sh (L-18) unless --skip-v1 and write
+# its verdict into results.json. Prints the result table; the final line never claims "every
 # executed live row passed" while a partial, stop or pending row of wave <= N
 # exists (every open row is named with its owner). Exit 0 when no row FAILED
 # and the strict gate is satisfied.
@@ -48,6 +49,7 @@ RUNNER="$REPO_ROOT/packages/omo-opencode/src/opencode-v2/parity/live-runner.ts"
 WAVE=""
 CI=0
 STRICT=0
+STRICT_FLAG=""
 SKIP_V1=0
 SELF_TEST=0
 NO_BUILD=0
@@ -312,6 +314,49 @@ PROJ_DIR=""
 PROJ_B_DIR=""
 REPO_BUN_DIR_BEFORE=""
 
+# ---- plugin reload for the translator stats lines ---------------------------
+# The host never runs plugin cleanup at process exit (SIGINT/SIGTERM are hard
+# exits on 2.4.1), so the "[opencode-v2] event stats " lines reach the logs
+# only when a runtime actually stops. A plugin reload stops the previous
+# runtime per location: step 1 rewrites the sandbox opencode.json with a
+# probe field; step 2 touches the plugin bundle when the rewrite alone is
+# not enough. OQA_PL_PLUGIN_BUNDLE and OQA_PL_RELOAD_POLL_SECS exist so the
+# self-test can drive this against a fake serve.out and a fake config path.
+OQA_PL_PLUGIN_BUNDLE="${OQA_PL_PLUGIN_BUNDLE:-}"
+OQA_PL_RELOAD_POLL_SECS="${OQA_PL_RELOAD_POLL_SECS:-20}"
+
+oqa_pl_reload_for_stats() {
+  local serve_out="$1" cfg_file="$2" cfg_body="$3" ev_dir="${EV_LIVE:-${TMPDIR:-/tmp}}"
+  local poll="$OQA_PL_RELOAD_POLL_SECS" waited=0 found=""
+  jq --argjson probe "$RANDOM" '. + {reload_probe: $probe}' <<< "$cfg_body" > "$cfg_file" 2>/dev/null || {
+    oqa_pl_fail "plugin reload: config rewrite failed for $cfg_file"
+    return 1
+  }
+  while [ "$waited" -lt "$poll" ]; do
+    grep -q '^\[opencode-v2\] event stats ' "$serve_out" 2>/dev/null && { found=1; break; }
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if [ -z "$found" ]; then
+    touch "${OQA_PL_PLUGIN_BUNDLE:-$REPO_ROOT/dist/index.js}"
+    waited=0
+    while [ "$waited" -lt "$poll" ]; do
+      grep -q '^\[opencode-v2\] event stats ' "$serve_out" 2>/dev/null && { found=1; break; }
+      sleep 1
+      waited=$((waited + 1))
+    done
+  fi
+  if [ -n "$found" ]; then
+    sleep 2
+    oqa_pl_log "plugin reload stopped the previous runtimes; stats lines detected in $serve_out"
+  else
+    oqa_pl_fail "plugin reload produced no [opencode-v2] event stats line within 40s"
+  fi
+  mkdir -p "$ev_dir"
+  { grep '^\[opencode-v2\] event stats ' "$serve_out" 2>/dev/null || true; } > "$ev_dir/stats-lines.txt"
+  [ -n "$found" ]
+}
+
 # Import mode: the self-test sources this file to exercise the verdict
 # table, the strict gate, the L-18 verdict write-back and the bun/ guard
 # without any OC2 dependency or trap overwrite. Everything above is
@@ -349,12 +394,19 @@ oqa_pl_main() {
 
   oqa_pl_capture_real_env
   oqa_v2_mk_sandbox || return 1
-  local plugin_dir cfg_dir
+  # The unified omo user config turns hashline on under the LITERAL bracketed
+  # "[opencode]" harness block; top-level and unbracketed "opencode" spellings
+  # are rejected by the config-migration validation (observed on 2.4.1).
+  local omo_cfg="$OQA_V2_SANDBOX/home/.omo/omo.jsonc"
+  mkdir -p "$(dirname "$omo_cfg")"
+  printf '%s\n' '{ "[opencode]": { "hashline_edit": true } }' > "$omo_cfg"
+  oqa_pl_log "sandbox omo config written: $omo_cfg"
+  local plugin_dir cfg_dir cfg_body
   plugin_dir="${OQA_V2_PLUGIN_DIR:-$REPO_ROOT}"
   [ -d "$plugin_dir" ] || { oqa_pl_fail "plugin dir not found: $plugin_dir"; return 1; }
   cfg_dir="$(oqa_v2_config_path)" || return 1
   mkdir -p "$cfg_dir"
-  cat > "$cfg_dir/opencode.json" <<JSON
+  cfg_body="$(cat <<JSON
 {
   "model": "openai/gpt-fake",
   "plugin": ["$plugin_dir"],
@@ -368,6 +420,8 @@ oqa_pl_main() {
   }
 }
 JSON
+)"
+  printf '%s\n' "$cfg_body" > "$cfg_dir/opencode.json"
   oqa_pl_log "sandbox config written (plugin: $plugin_dir)"
 
   PROJ_DIR="$OQA_V2_SANDBOX/proj"
@@ -438,6 +492,7 @@ JSON
   ],
   "tuiSmokeLog": "$WORK_DIR/tui-smoke.log",
   "pluginFileLog": "$plugin_file_log",
+  "sandboxOmoConfig": "$omo_cfg",
   "scriptedSteps": { "a": 1, "b": 2, "c": 2 }
 }
 JSON
@@ -453,13 +508,17 @@ JSON
   ( cd "$REPO_ROOT" && bun "$RUNNER" --wave "$WAVE" --api "$OQA_V2_SERVER_URL" \
       --password "$OQA_V2_SERVER_PASS" --plugin-log "$OQA_V2_SANDBOX/serve.out" \
       --host-log "$host_log_path" --manifest "$WORK_DIR/manifest.json" --out "$EV_LIVE" \
-      ${STRICT:+--strict} ) \
+      $STRICT_FLAG ) \
     > "$EV_LIVE/runner-live.out" 2>&1
   live_rc=$?
   cat "$EV_LIVE/runner-live.out" >&2 || true
   if [ "$live_rc" -ne 0 ]; then
     oqa_pl_log "live runner reported failures (rc=$live_rc); continuing to teardown for the evidence"
   fi
+
+  # ---- plugin reload for the stats lines, then shutdown ----
+  oqa_pl_log "triggering the plugin reload so the previous runtimes emit their stats lines..."
+  oqa_pl_reload_for_stats "$OQA_V2_SANDBOX/serve.out" "$cfg_dir/opencode.json" "$cfg_body" || true
 
   # ---- shutdown, post-shutdown log copies, teardown, post phase ----
   oqa_v2_serve_stop
@@ -506,6 +565,7 @@ JSON
   },
   "locations": [],
   "pluginFileLog": "$EV_LIVE/plugin-file.log",
+  "sandboxOmoConfig": "$omo_cfg",
   "sandboxPath": "$sandbox_path",
   "isolation": {
     "systemVersionBefore": "$sys_ver_before",
@@ -526,7 +586,7 @@ JSON
   ( cd "$REPO_ROOT" && bun "$RUNNER" --wave "$WAVE" --api "$OQA_V2_SERVER_URL" \
       --password "$OQA_V2_SERVER_PASS" --plugin-log "$EV_LIVE/serve.out" \
       --host-log "$EV_LIVE/host-opencode.log" --manifest "$WORK_DIR/post-manifest.json" \
-      --out "$EV_LIVE" --post ${STRICT:+--strict} ) > "$EV_LIVE/runner-post.out" 2>&1
+      --out "$EV_LIVE" --post $STRICT_FLAG ) > "$EV_LIVE/runner-post.out" 2>&1
   post_rc=$?
   cat "$EV_LIVE/runner-post.out" >&2 || true
 
@@ -558,7 +618,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --wave) [ $# -ge 2 ] || { printf 'error: --wave requires a number\n' >&2; exit 2; }; WAVE="$2"; shift 2 ;;
     --ci) CI=1; shift ;;
-    --strict) STRICT=1; shift ;;
+    --strict) STRICT=1; STRICT_FLAG="--strict"; shift ;;
     --skip-v1) SKIP_V1=1; shift ;;
     --self-test) SELF_TEST=1; shift ;;
     --no-build) NO_BUILD=1; shift ;;

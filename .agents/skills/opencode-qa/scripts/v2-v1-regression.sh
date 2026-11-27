@@ -117,14 +117,27 @@ oqa_v1r_main() {
 
   local work
   work="$(mktemp -d -t oqa-v1-regr.XXXXXX)"
-  local agent_raw tool_raw agent_curl_rc tool_curl_rc
-  agent_raw="$(curl -sS -m 120 -u "opencode:$pass" "$OQA_SERVER_URL/agent" 2>"$work/agent-curl.err")"
+  # GET /agent measured 89.7 s (HTTP 200, 450 KB) on a slow-link day while
+  # the sandbox held connections to Cloudflare: the plugin config phase dials
+  # remote endpoints, so the curls run with generous timeouts and print the
+  # measured durations into the L-18 evidence.
+  local agent_raw tool_raw agent_curl_rc tool_curl_rc agent_time tool_time
+  curl -sS -m 300 -u "opencode:$pass" "$OQA_SERVER_URL/agent" \
+    -o "$work/agent-raw.json" -w '%{time_total}' > "$work/agent-time" 2>"$work/agent-curl.err"
   agent_curl_rc=$?
-  tool_raw="$(curl -sS -m 60 -u "opencode:$pass" \
-    "$OQA_SERVER_URL/experimental/tool?directory=$neutral&provider=$BASELINE_MODEL_PROVIDER&model=$BASELINE_MODEL" 2>"$work/tool-curl.err")"
+  agent_raw="$(cat "$work/agent-raw.json" 2>/dev/null || true)"
+  agent_time="$(cat "$work/agent-time" 2>/dev/null || true)"
+  curl -sS -m 120 -u "opencode:$pass" \
+    "$OQA_SERVER_URL/experimental/tool?directory=$neutral&provider=$BASELINE_MODEL_PROVIDER&model=$BASELINE_MODEL" \
+    -o "$work/tool-raw.json" -w '%{time_total}' > "$work/tool-time" 2>"$work/tool-curl.err"
   tool_curl_rc=$?
-  [ "$agent_curl_rc" -eq 0 ] || oqa_v1r_log "GET /agent curl rc=$agent_curl_rc: $(head -c 300 "$work/agent-curl.err" 2>/dev/null)"
-  [ "$tool_curl_rc" -eq 0 ] || oqa_v1r_log "GET /experimental/tool curl rc=$tool_curl_rc: $(head -c 300 "$work/tool-curl.err" 2>/dev/null)"
+  tool_raw="$(cat "$work/tool-raw.json" 2>/dev/null || true)"
+  tool_time="$(cat "$work/tool-time" 2>/dev/null || true)"
+  [ -n "$agent_time" ] || agent_time="n/a"
+  [ -n "$tool_time" ] || tool_time="n/a"
+  [ "$agent_curl_rc" -eq 0 ] || oqa_v1r_log "GET /agent curl rc=$agent_curl_rc after ${agent_time}s: $(head -c 300 "$work/agent-curl.err" 2>/dev/null)"
+  [ "$tool_curl_rc" -eq 0 ] || oqa_v1r_log "GET /experimental/tool curl rc=$tool_curl_rc after ${tool_time}s: $(head -c 300 "$work/tool-curl.err" 2>/dev/null)"
+  oqa_v1r_log "GET /agent took ${agent_time}s; GET /experimental/tool took ${tool_time}s"
 
   cp "$XDG_STATE_HOME/serve.log" "$work/serve.log" 2>/dev/null || true
   printf '%s' "$agent_raw" | jq -S '[.[] | {id: (.name | split(" - ")[0] | ascii_downcase),
@@ -207,6 +220,30 @@ oqa_v1r_main() {
     cp "$work/serve.log" "$OQA_V1_EVIDENCE/v1-serve.log" 2>/dev/null || true
     cp "$work/agents-live.json" "$OQA_V1_EVIDENCE/agents-live.json" 2>/dev/null || true
   fi
+  # The isolated XDG root is not guaranteed to survive oqa_cleanup's temp-dir
+  # sweep, and a surviving V1 host child whose environ still carries the root
+  # resurrects the tree by re-creating its data dirs on the next write (the
+  # same double-fork trap the V2 sandbox library solves with environ
+  # matching). Reap those processes first, then remove the root.
+  local rp reaped=0
+  for rp in $(pgrep -f opencode 2>/dev/null); do
+    [ -r "/proc/$rp/environ" ] || continue
+    if tr '\0' '\n' < "/proc/$rp/environ" 2>/dev/null | grep -q "^XDG_CONFIG_HOME=$xdg_root/config\$"; then
+      kill "$rp" 2>/dev/null || true
+      reaped=$((reaped + 1))
+    fi
+  done
+  if [ "$reaped" -gt 0 ]; then
+    sleep 1
+    for rp in $(pgrep -f opencode 2>/dev/null); do
+      [ -r "/proc/$rp/environ" ] || continue
+      if tr '\0' '\n' < "/proc/$rp/environ" 2>/dev/null | grep -q "^XDG_CONFIG_HOME=$xdg_root/config\$"; then
+        kill -9 "$rp" 2>/dev/null || true
+      fi
+    done
+  fi
+  [ -n "${OQA_XDG_ROOT:-}" ] && rm -rf "$OQA_XDG_ROOT"
+  OQA_XDG_ROOT=""
   rm -rf "$work"
   rm -f "$dump_before" "$dump_after" "$dump_after.new"
 
@@ -221,12 +258,47 @@ oqa_v1r_main() {
     fi
   fi
 
-  printf 'L-18 %s: V1 regression on system OpenCode (agents %s, tools %s, v2 marker %s, tui %s)\n' \
+  # A surviving TUI/host child resurrects a removed oqa-xdg root the same way
+  # the V2 sandbox library's daemon does: after the owner script exits its
+  # root is gone, and the orphan re-creates its data dirs on the next write.
+  # An orphaned root is one without its home/ dir: oqa_mk_isolated_xdg always
+  # creates home/ and never removes it while the owning run is alive, so no
+  # live QA run (including a parallel one on this machine) can be matched.
+  local qp qroot qorphaned="" swept="" d
+  for qp in $(pgrep -f opencode 2>/dev/null); do
+    [ -r "/proc/$qp/environ" ] || continue
+    qroot="$(tr '\0' '\n' < "/proc/$qp/environ" 2>/dev/null | sed -n 's|^XDG_CONFIG_HOME=\(.*oqa-xdg\.[A-Za-z0-9]\{6\}\)/config$|\1|p')"
+    [ -n "$qroot" ] || continue
+    [ -d "$qroot/home" ] && continue
+    kill "$qp" 2>/dev/null || true
+    case " $qorphaned " in *" $qroot "*) ;; *) qorphaned="$qorphaned $qroot" ;; esac
+  done
+  if [ -n "$qorphaned" ]; then
+    sleep 1
+    for qp in $(pgrep -f opencode 2>/dev/null); do
+      [ -r "/proc/$qp/environ" ] || continue
+      qroot="$(tr '\0' '\n' < "/proc/$qp/environ" 2>/dev/null | sed -n 's|^XDG_CONFIG_HOME=\(.*oqa-xdg\.[A-Za-z0-9]\{6\}\)/config$|\1|p')"
+      [ -n "$qroot" ] || continue
+      case " $qorphaned " in *" $qroot "*) kill -9 "$qp" 2>/dev/null || true ;; esac
+    done
+    oqa_v1r_log "reaped orphaned oqa-xdg writer(s):$qorphaned"
+  fi
+  for d in "${TMPDIR:-/tmp}"/oqa-xdg.* /tmp/oqa-xdg.*; do
+    [ -d "$d" ] || continue
+    [ -d "$d/home" ] && continue
+    rm -rf "$d"
+    swept="$swept $d"
+  done
+  [ -n "$swept" ] && oqa_v1r_log "swept orphaned oqa-xdg tree(s):$swept"
+  true
+
+  printf 'L-18 %s: V1 regression on system OpenCode (agents %s, tools %s, v2 marker %s, tui %s; GET /agent %ss, GET /experimental/tool %ss)\n' \
     "$([ "$agent_ok" -eq 1 ] && [ "$tools_ok" -eq 1 ] && [ "$v2_marker" = "" ] && [ "$tui_ok" -eq 1 ] && echo PASS || echo FAIL)" \
     "$([ "$agent_ok" -eq 1 ] && echo ok || echo DRIFTED)" \
     "$([ "$tools_ok" -eq 1 ] && echo ok || echo DRIFTED)" \
     "${v2_marker:-absent}" \
-    "$([ "$tui_ok" -eq 1 ] && echo ok || echo failed)" >&2
+    "$([ "$tui_ok" -eq 1 ] && echo ok || echo failed)" \
+    "$agent_time" "$tool_time" >&2
 
   [ "$FAILS" -eq 0 ]
 }

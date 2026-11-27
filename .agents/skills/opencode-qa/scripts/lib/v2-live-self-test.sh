@@ -3,10 +3,13 @@
 #
 # Runs V2/parity/live-runner.ts against a tiny stub API (canned responses
 # served by lib/v2-live-stub.mjs) and proves PASS and FAIL detection for
-# every implemented check. The stub models the FIXED runtime: the scenario B
-# read result carries hashline LINE# tags, the scenario C shell result
-# carries the V1 guard message byte-for-byte (and never the file content),
-# and the cleanup stats lines are present in serve.out. Coverage:
+# every implemented check. The stub models the FIXED runtime with the REAL
+# 2.4.1 host shapes (task-20 runtime capture): the scenario B read result
+# carries hashline LINE# tags as the whole content text ("1#NS|..."), the
+# scenario C shell call is the real vetoed envelope
+# {"status":"error","content":null,"error":{"type":"unknown","message":...}}
+# with the V1 guard message byte-for-byte, and the cleanup stats lines are
+# present in serve.out. Coverage:
 #   good live run    L-01/L-02/L-07/L-09/L-11/L-20/L-21/L-22/L-24 PASS,
 #                    L-08 PARTIAL (sisyphus line deferred), L-15/L-18 pending
 #   good post run    L-15 PASS (ambient sessions tolerated), L-11 PASS
@@ -15,8 +18,9 @@
 #                    in main) plus the L-08 full-strength PASS case and the
 #                    L-22 process-wide STOP verdict
 #   driver tests     truthful final line, --strict gate, L-18 verdict
-#                    write-back, bun/ junk guard (driver sourced in import
-#                    mode; no OC2 dependency)
+#                    write-back, bun/ junk guard, reload-for-stats trigger
+#                    (step 1, step 2, never) (driver sourced in import mode;
+#                    no OC2 dependency)
 
 set -uo pipefail
 
@@ -122,7 +126,13 @@ JSON
 
 oqa_st_write_ctx_c_leak() {
   cat > "$1/context-ses_stub_c.json" <<JSON
-{"data":[{"id":"m1","type":"user","text":"cat"},{"id":"m2","type":"assistant","agent":"build","content":[{"type":"tool","id":"call_1","name":"shell","state":{"status":"completed","content":[{"type":"text","text":"$GUARD_MESSAGE\nparity row nine file\nsecond line\n"}]}}]}]}
+{"data":[{"id":"m1","type":"user","text":"cat"},{"id":"m2","type":"assistant","agent":"build","content":[{"type":"tool","id":"call_1","name":"shell","state":{"status":"error","content":null,"error":{"type":"unknown","message":"$GUARD_MESSAGE\nparity row nine file\nsecond line"}}}]}]}
+JSON
+}
+
+oqa_st_write_ctx_c_executed() {
+  cat > "$1/context-ses_stub_c.json" <<JSON
+{"data":[{"id":"m1","type":"user","text":"cat"},{"id":"m2","type":"assistant","agent":"build","content":[{"type":"tool","id":"call_1","name":"shell","state":{"status":"completed","content":[{"type":"text","text":"parity row nine file\nsecond line"}]}}]}]}
 JSON
 }
 
@@ -139,10 +149,10 @@ write_good_dir() {
 {"location":{"directory":"$dir"},"data":[{"id":"oh-my-openagent","source":{"type":"local","path":"$dir"},"features":{"server":true},"state":{"status":"active"}}]}
 JSON
   cat > "$dir/context-ses_stub_b.json" <<JSON
-{"data":[{"id":"m1","type":"user","text":"Read parity-file.txt"},{"id":"m2","type":"assistant","agent":"build","content":[{"type":"tool","id":"call_1","name":"read","state":{"status":"completed","content":[{"type":"text","text":"Read file /tmp/probe.txt, lines 1-2\n1#ZP|hello\n2#QM|world"}]}}]}]}
+{"data":[{"id":"m1","type":"user","text":"Read parity-file.txt"},{"id":"m2","type":"assistant","agent":"build","content":[{"type":"tool","id":"call_1","name":"read","state":{"status":"completed","input":{"path":"$dir/proj-a/parity-file.txt"},"content":[{"type":"text","text":"1#NS|parity row nine file\n2#HP|second line"}],"metadata":{"truncated":false}}}]}]}
 JSON
   cat > "$dir/context-ses_stub_c.json" <<JSON
-{"data":[{"id":"m1","type":"user","text":"cat"},{"id":"m2","type":"assistant","agent":"build","content":[{"type":"tool","id":"call_1","name":"shell","state":{"status":"completed","content":[{"type":"text","text":"$GUARD_MESSAGE"}]}}]}]}
+{"data":[{"id":"m1","type":"user","text":"cat"},{"id":"m2","type":"assistant","agent":"build","content":[{"type":"tool","id":"call_1","name":"shell","state":{"status":"error","input":{"command":"cat $dir/proj-a/parity-file.txt"},"content":null,"error":{"type":"unknown","message":"$GUARD_MESSAGE"}}}]}]}
 JSON
   cat > "$dir/serve.out" <<LOG
 server listening on http://127.0.0.1:1
@@ -335,8 +345,12 @@ main() {
     "oqa_st_write_ctx_b_notag '$TMP/case-L-09-read-tag-missing'"
   broken_case "L-09" "guard-text-missing" \
     "oqa_st_write_ctx_c_plain '$TMP/case-L-09-guard-text-missing'"
-  broken_case "L-09" "file-content-leak" \
-    "oqa_st_write_ctx_c_leak '$TMP/case-L-09-file-content-leak'"
+  broken_case "L-09" "file-content-leak-via-error-text" \
+    "oqa_st_write_ctx_c_leak '$TMP/case-L-09-file-content-leak-via-error-text'"
+  broken_case "L-09" "cat-executed-completed" \
+    "oqa_st_write_ctx_c_executed '$TMP/case-L-09-cat-executed-completed'"
+  broken_case "L-09" "file-content-missing" \
+    "jq 'del(.scenarios.c.fileContent)' '$TMP/case-L-09-file-content-missing/manifest.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-09-file-content-missing/manifest.json'"
   broken_case "L-11" "stats-line-missing" \
     "oqa_st_del_stats_lines '$TMP/case-L-11-stats-line-missing/serve.out'" 1
   broken_case "L-11" "translated-zero" \
@@ -499,6 +513,64 @@ driver_tests() {
     bad "driver: bun guard tripped on a pre-existing bun/"; driver_fails=$((driver_fails + 1))
   fi
   REPO_ROOT="$(cd "$SCRIPT_DIR/../../../../.." && pwd)"
+
+  # 6f. plugin reload for the stats lines: the line appears after step 1
+  # (config rewrite), after step 2 (bundle touch), and never (FAIL). The
+  # append jobs are waited on by PID: a bare wait would also wait for the
+  # still-running stub server of the last runner case.
+  local rdir="$TMP/dtreload" stats_line fails_before marker app_pid
+  mkdir -p "$rdir"
+  EV_LIVE="$rdir"
+  stats_line='[opencode-v2] event stats {"directory":"/probe","eventsSeen":1,"translated":1,"fetchWorthy":1,"coalesceBatches":0,"contextFetches":1,"contextFetchFailures":0}'
+  OQA_PL_PLUGIN_BUNDLE="$rdir/fake-dist.js"
+  OQA_PL_RELOAD_POLL_SECS=2
+  touch -t 202001010000 "$rdir/fake-dist.js"
+
+  printf 'server listening\n' > "$rdir/serve.out"
+  rm -f "$rdir/cfg.json" "$rdir/stats-lines.txt"
+  ( sleep 0.5; printf '%s\n' "$stats_line" >> "$rdir/serve.out" ) &
+  app_pid=$!
+  if oqa_pl_reload_for_stats "$rdir/serve.out" "$rdir/cfg.json" '{"model":"openai/gpt-fake"}'; then
+    if grep -q 'reload_probe' "$rdir/cfg.json" && grep -qF 'event stats' "$rdir/stats-lines.txt"; then
+      oqa_st_pass "driver: reload trigger finds the stats line after the config rewrite (step 1)"
+    else
+      bad "driver: reload step 1 passed but the probe config or the stats copy is wrong"
+      driver_fails=$((driver_fails + 1))
+    fi
+  else
+    bad "driver: reload trigger failed although the line appeared after step 1"
+    driver_fails=$((driver_fails + 1))
+  fi
+  wait "$app_pid" 2>/dev/null || true
+
+  printf 'server listening\n' > "$rdir/serve.out"
+  marker="$rdir/step2.marker"
+  touch "$marker"
+  ( sleep 3; printf '%s\n' "$stats_line" >> "$rdir/serve.out" ) &
+  app_pid=$!
+  if oqa_pl_reload_for_stats "$rdir/serve.out" "$rdir/cfg.json" '{"model":"openai/gpt-fake"}' \
+     && [ "$rdir/fake-dist.js" -nt "$marker" ]; then
+    oqa_st_pass "driver: reload trigger falls back to the bundle touch and finds the line (step 2)"
+  else
+    bad "driver: reload step 2 (bundle touch) failed"
+    driver_fails=$((driver_fails + 1))
+  fi
+  wait "$app_pid" 2>/dev/null || true
+
+  printf 'server listening\n' > "$rdir/serve.out"
+  fails_before=$FAILS
+  if oqa_pl_reload_for_stats "$rdir/serve.out" "$rdir/cfg.json" '{"model":"openai/gpt-fake"}'; then
+    bad "driver: reload trigger passed although no stats line ever appeared"
+    driver_fails=$((driver_fails + 1))
+  else
+    if [ $((FAILS - fails_before)) -eq 1 ] && [ ! -s "$rdir/stats-lines.txt" ]; then
+      oqa_st_pass "driver: reload trigger FAILs truthfully when no stats line ever appears"
+    else
+      bad "driver: reload never-case did not report the failure truthfully"
+      driver_fails=$((driver_fails + 1))
+    fi
+  fi
+  unset OQA_PL_PLUGIN_BUNDLE OQA_PL_RELOAD_POLL_SECS
 
   FAILS=$((self_fails + driver_fails))
 }
