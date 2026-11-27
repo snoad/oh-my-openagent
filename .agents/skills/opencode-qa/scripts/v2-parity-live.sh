@@ -489,6 +489,13 @@ JSON
   export OQA_SECRET_TOKEN="$OQA_PL_SECRET_TOKEN"
   oqa_v2_serve_start || return 1
   oqa_v2_wait_ready 60 || { oqa_pl_fail "server never became ready"; cat "$OQA_V2_SANDBOX/serve.out" >&2; return 1; }
+  # The first-session race pin (PR #4): scenario A launches with NO settle
+  # wait, at plugin activation; its prompt POST awaits the host activation
+  # boundary itself, so L-04 proves the tool set the FIRST admitted session
+  # sees rather than a post-registration state. The active poll below only
+  # records the timestamp for L-01/L-20 after that boundary.
+  local sid_a="" sid_b="" sid_c="" sid_locb=""
+  oqa_pl_run_once a "v2 parity a" "Reply with exactly: OQA_A_FINAL" "$PROJ_DIR" && sid_a="$OQA_PL_SID" || return 1
   for i in $(seq 1 60); do
     resp="$(oqa_v2_api GET /api/plugin 2>/dev/null)" || resp=""
     st="$(printf '%s' "$resp" | jq -r --arg id "${OQA_V2_PLUGIN_ID:-oh-my-openagent}" '.data[] | select(.id == $id) | .state.status' 2>/dev/null)"
@@ -502,8 +509,6 @@ JSON
     oqa_pl_pass "plugin active $((plugin_first_seen_ms - server_start_ms)) ms after server start"
   fi
 
-  local sid_a="" sid_b="" sid_c="" sid_locb=""
-  oqa_pl_run_once a "v2 parity a" "Reply with exactly: OQA_A_FINAL" "$PROJ_DIR" && sid_a="$OQA_PL_SID" || return 1
   oqa_pl_start_fake "$WORK_DIR/scenario-b.json" "$WORK_DIR/req-b" || return 1
   oqa_pl_run_once b "v2 parity b" "Read parity-file.txt and reply with its exact content" "$PROJ_DIR" && sid_b="$OQA_PL_SID" || return 1
   oqa_pl_start_fake "$WORK_DIR/scenario-c.json" "$WORK_DIR/req-c" || return 1
