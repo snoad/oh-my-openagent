@@ -7,7 +7,7 @@ import { textLines } from "./live-check-context"
 // emitted by the V2 events runtime when the server stops; the live checks
 // parse THIS line and never synthesize their own counters.
 
-export const EVENT_STATS_PREFIX = "[opencode-v2] event stats "
+const EVENT_STATS_PREFIX = "[opencode-v2] event stats "
 
 export type EventStatsEntry = {
   readonly directory: string

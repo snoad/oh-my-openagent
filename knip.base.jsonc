@@ -23,7 +23,8 @@
   // relay-spec symbols it imports ported in spec-proto.ts); its exports are the upstream client's API.
   // The opencode-qa fake model is invoked from the SKILL.md Case E prose only, no code importer; a live QA driver in
   // the same category as the vendored/extension entries.
-  "ignore": ["packages/shared-skills/upstreams/**", "packages/omo-senpi/vendor/**", "packages/gnome-window-rects-extension/extension.js", "packages/device-service-core/vendor/omo-5.1.66-decoder/**", "packages/device-service-core/src/local-api/**", ".agents/skills/opencode-qa/scripts/lib/v2-fake-model.mjs"],
+  // The v2 live stub server is a one-off API stub started with node by the lib/v2-live-self-test.sh self-test.
+  "ignore": ["packages/shared-skills/upstreams/**", "packages/omo-senpi/vendor/**", "packages/gnome-window-rects-extension/extension.js", "packages/device-service-core/vendor/omo-5.1.66-decoder/**", "packages/device-service-core/src/local-api/**", ".agents/skills/opencode-qa/scripts/lib/v2-fake-model.mjs", ".agents/skills/opencode-qa/scripts/lib/v2-live-stub.mjs"],
   // The Electron conformance fixture's main process and preload import "electron", which the Electron binary running them
   // provides at run time (its CI job fetches one pinned release); scoped to those two files so an unlisted import elsewhere
   // still fails.

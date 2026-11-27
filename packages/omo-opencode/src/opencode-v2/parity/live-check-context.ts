@@ -104,11 +104,6 @@ export function textLines(text: string): string[] {
   return text.split("\n").filter((line) => line.length > 0)
 }
 
-export function countMatches(text: string, pattern: RegExp): number {
-  const flags = pattern.flags.includes("g") ? pattern.flags : pattern.flags + "g"
-  return [...text.matchAll(new RegExp(pattern.source, flags))].length
-}
-
 // Marker strings such as "[opencode-v2] hook event fired" are regex
 // metacharacter minefields, so literal counting stays out of regex land.
 export function countLiteral(text: string, literal: string): number {
