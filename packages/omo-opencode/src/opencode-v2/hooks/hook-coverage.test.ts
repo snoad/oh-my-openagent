@@ -14,6 +14,7 @@ import {
   coverageLimitIds,
   spyCreatedHooks,
   V2_HOOK_COVERAGE_LEDGER,
+  type HookInvocationRecorder,
 } from "./hook-coverage"
 import { resetCompactionAdaptationStateForTesting } from "./adapt-compaction-hooks"
 import { resetIdleContinuationStateForTesting } from "./adapt-idle-continuation"
@@ -25,8 +26,30 @@ import { resetIdleContinuationStateForTesting } from "./adapt-idle-continuation"
 // the landed wave count must have been invoked. The full-reachability sweep
 // activates when the wave gate reaches 4 without changing this assertion.
 
-async function flushAsync(ms = 50): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, ms))
+// One macrotask boundary: drains the fire-and-forget adapter registrations'
+// microtask chains so the trigger pushes find their subscribers live.
+async function flushAsync(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+}
+
+function landedCoverageKeys(): readonly string[] {
+  return V2_HOOK_COVERAGE_LEDGER.filter(
+    (entry) => entry.status === "reachable" && (entry.coverageWave ?? 0) <= LANDED_WAVES,
+  ).map((entry) => entry.key)
+}
+
+// Waits on the recorder as the observable signal of the async trigger
+// chains, bounded by an explicit timeout that names the still-missing keys.
+async function waitUntilLandedCoverage(recorder: HookInvocationRecorder, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const missing = landedCoverageKeys().filter((key) => !recorder.invoked(key))
+    if (missing.length === 0) return
+    if (Date.now() >= deadline) {
+      throw new Error(`waited ${String(timeoutMs)}ms for hook coverage, still missing: ${missing.join(",")}`)
+    }
+    await flushAsync()
+  }
 }
 
 describe("V2_HOOK_COVERAGE_LEDGER", () => {
@@ -75,39 +98,33 @@ describe("V2_HOOK_COVERAGE_LEDGER", () => {
     })
     try {
       await ctx.session.create({ id: "ses_coverage" })
+      await flushAsync()
       ctx.__pushEvent({ type: "session.created", created: 1, data: { sessionID: "ses_coverage", title: "t" } })
-      await flushAsync()
 
-      // when: the wave-2 adapter trigger set
+      // when: the wave-2 adapter trigger set, in stream order; the event
+      // loops consume each subscriber queue FIFO, so no wall-clock waits
       ctx.__pushEvent({ type: "session.compaction.started", created: 2, data: { sessionID: "ses_coverage" } })
-      await flushAsync()
       ctx.__pushEvent({
         type: "session.compaction.ended",
         created: 3,
         data: { sessionID: "ses_coverage", summary: "the finished summary" },
       })
-      await flushAsync()
       ctx.__pushEvent({
         type: "session.status",
         created: 4,
         data: { sessionID: "ses_coverage", status: { type: "idle" } },
       })
-      await flushAsync(300)
       await ctx.__fire("session", "experimental.idle", { sessionID: "ses_coverage", background: [] })
-      await flushAsync(100)
+      await waitUntilLandedCoverage(recorder, 2000)
 
       // then
       const ledgerKeys = V2_HOOK_COVERAGE_LEDGER.map((entry) => entry.key).sort()
       expect(ledgerKeys, "the ledger must cover exactly the composed hook records").toEqual(spiedKeys)
-      const missed: string[] = []
-      for (const entry of V2_HOOK_COVERAGE_LEDGER) {
-        if (entry.status !== "reachable" || (entry.coverageWave ?? 0) > LANDED_WAVES) continue
-        if (!recorder.invoked(entry.key)) missed.push(entry.key)
-      }
+      const missed = landedCoverageKeys().filter((key) => !recorder.invoked(key))
       expect(missed, `landed-wave coverage misses: ${missed.join(",")}`).toEqual([])
     } finally {
       await runtime.stop()
       releaseAllPromptAsyncReservationsForTesting()
     }
-  }, 60000)
+  })
 })

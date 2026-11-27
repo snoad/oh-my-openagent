@@ -12,7 +12,8 @@ import type { V2IncomingEvent } from "./v2-event-payload"
 // each result inside try/catch with error isolation, and a stop() that aborts
 // and awaits loop completion through an injectable timeout.
 
-type Properties = Record<string, any>
+// The subscribe call arguments the production loop sends, typed from the exported subscription context.
+type EventSubscribeOptions = NonNullable<Parameters<V2EventSubscriptionContext["event"]["subscribe"]>[0]>
 
 async function flushAsync(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -20,7 +21,8 @@ async function flushAsync(): Promise<void> {
 
 function subscriptionTypes(ctx: { __calls: readonly { op: string; args: readonly unknown[] }[] }): string[] {
   const call = ctx.__calls.find((entry) => entry.op === "event.subscribe")
-  return ((call?.args[0] as Properties | undefined)?.types ?? []) as string[]
+  const options = call?.args[0] as EventSubscribeOptions | undefined
+  return [...(options?.types ?? [])]
 }
 
 describe("subscribeV2Events", () => {
@@ -56,7 +58,9 @@ describe("subscribeV2Events", () => {
     expect(subscriptionTypes(ctx)).toContain("session.tool.called")
     expect(subscriptionTypes(ctx)).toContain("session.execution.failed")
     expect(delivered.map((event) => event.type)).toEqual(["session.created"])
-    expect((delivered[0]?.properties as Properties).info.id).toBe("ses_1")
+    const created = delivered[0]
+    if (created?.type !== "session.created") throw new Error("expected the translated session.created event")
+    expect(created.properties.info.id).toBe("ses_1")
   })
 
   it("isolates a failing V1 handler and keeps delivering later events", async () => {
