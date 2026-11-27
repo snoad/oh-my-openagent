@@ -554,6 +554,8 @@ JSON
   local context_a_file="$EV_LIVE/context-a.json"
   oqa_v2_api GET /api/mcp > "$EV_LIVE/mcp-api.json" 2>/dev/null || printf '{"data":[]}' > "$EV_LIVE/mcp-api.json"
   local mcp_api_capture="$EV_LIVE/mcp-api.json"
+  oqa_v2_api GET /api/command > "$EV_LIVE/command-api.json" 2>/dev/null || printf '{"data":[]}' > "$EV_LIVE/command-api.json"
+  local command_api_capture="$EV_LIVE/command-api.json"
 
   local serve_location="$OQA_V2_SANDBOX/tmp"
   cat > "$WORK_DIR/manifest.json" <<JSON
@@ -579,6 +581,7 @@ JSON
   "agentsAfterFile": "$agents_after",
   "contextAFile": "$context_a_file",
   "mcpApiCaptureFile": "$mcp_api_capture",
+  "commandApiCaptureFile": "$command_api_capture",
   "secretTokenFile": "$OQA_V2_SANDBOX/tmp/oqa-secret-token.txt",
   "hotAgentId": "$hot_agent",
   "scriptedSteps": { "a": 1, "b": 2, "c": 2 }
@@ -632,6 +635,19 @@ JSON
   for i in $(seq 1 60); do
     st_post="$(oqa_v2_api GET /api/plugin 2>/dev/null | jq -r --arg id "${OQA_V2_PLUGIN_ID:-oh-my-openagent}" '.data[] | select(.id == $id) | .state.status' 2>/dev/null)"
     [ "$st_post" = "active" ] && break
+    kill -0 "$OQA_V2_SERVER_PID" 2>/dev/null || break
+    sleep 1
+  done
+  # The reload tail keeps the event loop busy with the MCP reconnects after the
+  # plugin reports active; the scenario CLI resolves its server with a 5 s
+  # window and a connect inside that churn times out (task-27 live evidence:
+  # run d started 7 s after the reload and its CLI timed out while mcp
+  # connected spans were still landing). Wait for /api/info to answer within
+  # the same 5 s window before the post-phase scenarios; bounded, no sleeps
+  # beyond the poll tick.
+  for i in $(seq 1 90); do
+    info_code="$(curl -s -o /dev/null -m 5 -w '%{http_code}' -u "opencode:$OQA_V2_SERVER_PASS" "$OQA_V2_SERVER_URL/api/info" 2>/dev/null)"
+    [ "$info_code" = "200" ] && { oqa_pl_log "post-reload /api/info answered within the 5 s window"; break; }
     kill -0 "$OQA_V2_SERVER_PID" 2>/dev/null || break
     sleep 1
   done

@@ -10,15 +10,18 @@
 # {"status":"error","content":null,"error":{"type":"unknown","message":...}}
 # with the V1 guard message byte-for-byte, and the cleanup stats lines are
 # present in serve.out. Coverage:
-#   good live run    L-01/L-02/L-03/L-04/L-05/L-07/L-08/L-09/L-11/L-20/L-21/
-#                    L-22/L-23/L-24 PASS (the stub models the registered
+#   good live run    L-01/L-02/L-03/L-04/L-05/L-06/L-07/L-08/L-09/L-11/L-20/
+#                    L-21/L-22/L-23/L-24 PASS (the stub models the registered
 #                    state: the agents captures derive from the V1 baseline
 #                    fixtures, the main scenario A request carries the
 #                    sisyphus system first line and the registered tool set
 #                    minus the disabled_tools entry, GET /api/mcp lists the
-#                    four tier-1 servers and the connected secret probe, and
-#                    the L-05 tools/list half drives the REAL lsp server),
-#                    L-06/L-15/L-18 pending
+#                    four tier-1 servers and the connected secret probe, the
+#                    L-05 tools/list half drives the REAL lsp server, and
+#                    GET /api/command lists the expected fixture commands
+#                    with the stub appending the interception marker on a
+#                    command submission),
+#                    L-15/L-18 pending
 #   good post run    L-15 PASS (ambient sessions tolerated; absent system
 #                    opencode = version clause not applicable), L-11 PASS
 #                    (stats line, translated > 0), L-24 PASS (bound holds),
@@ -225,6 +228,11 @@ LOG
   # (host-only names and the disabled_tools entry excluded); the aux request
   # keeps the host placeholder.
   printf '%s\n' '{ "[opencode]": { "disabled_tools": ["look_at"], "mcp_env_allowlist": ["OQA_SECRET_TOKEN"] } }' > "$dir/omo.jsonc"
+  # The L-06 command surface: the real 2.4.1 GET /api/command answer shape
+  # ({data: [{name, description}]}) over the committed expected fixture.
+  jq -c '{data: [.[] | {name: ., description: "stub command"}]}' \
+    "$REPO_ROOT/packages/omo-opencode/src/opencode-v2/parity/fixtures/expected/commands.json" \
+    > "$dir/command.json"
   local sisyphus_line identity_line tools_json
   sisyphus_line="$(oqa_st_sisyphus_first_line)"
   identity_line="$(oqa_st_sisyphus_identity_line)"
@@ -342,6 +350,7 @@ SSE
   "hotAgentId": "oqa-hot-agent",
   "sandboxOmoConfig": "$dir/omo.jsonc",
   "mcpApiCaptureFile": "$dir/mcp.json",
+  "commandApiCaptureFile": "$dir/command.json",
   "secretTokenFile": "$dir/sandbox-token.txt",
   "sandboxPath": "$dir/sandbox-gone",
   "scriptedSteps": {"a": 1, "b": 2, "c": 2, "d": 2, "e": 1}
@@ -408,7 +417,7 @@ main() {
   start_stub "$good" || { oqa_st_fail "stub did not start"; return 1; }
   run_runner "$good" "$good/manifest.json" "$good/out-live" || true
   local results="$good/out-live/results.json"
-  for row in L-01 L-02 L-03 L-04 L-05 L-07 L-08 L-09 L-11 L-20 L-21 L-22 L-23 L-24; do
+  for row in L-01 L-02 L-03 L-04 L-05 L-06 L-07 L-08 L-09 L-11 L-20 L-21 L-22 L-23 L-24; do
     expect_row "$results" "$row" "true" "good live"
   done
   expect_row "$results" "L-15" "pending" "good live"
@@ -467,6 +476,10 @@ main() {
     "jq -c 'if has(\"tools\") and (.tools | type) == \"array\" then .tools |= map(select(.name != \"skill\")) else . end' '$TMP/case-L-04-tool-dropped/req-a/requests.jsonl' > '$TMP/x.jsonl' && mv '$TMP/x.jsonl' '$TMP/case-L-04-tool-dropped/req-a/requests.jsonl'"
   broken_case "L-04" "schema-drift" \
     "jq -c 'if has(\"tools\") and (.tools | type) == \"array\" then .tools |= map(if .name == \"grep\" then .parameters.type = \"string\" else . end) else . end' '$TMP/case-L-04-schema-drift/req-a/requests.jsonl' > '$TMP/x.jsonl' && mv '$TMP/x.jsonl' '$TMP/case-L-04-schema-drift/req-a/requests.jsonl'"
+
+  # L-06 FAIL case: an expected plugin command missing from GET /api/command.
+  broken_case "L-06" "command-dropped" \
+    "jq -c '.data |= map(select(.name != \"goal\"))' '$TMP/case-L-06-command-dropped/command.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-06-command-dropped/command.json'"
 
   # L-10 FAIL cases (post phase): the function_call gone, and a result text
   # that is not the V1-shaped grep output.

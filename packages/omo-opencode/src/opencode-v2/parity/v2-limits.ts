@@ -123,7 +123,7 @@ export const V2_LIMITS: V2Limit[] = [
     id: "LIM-15",
     status: "candidate",
     is: ["IS-2", "IS-13"],
-    reason: "permission projection rules OpenCode 2 cannot express",
+    reason: "V1 glob tool rules: literal action strings have no pattern match; the context hook hides them (task 27)",
   },
   {
     id: "LIM-16",

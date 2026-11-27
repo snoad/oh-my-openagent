@@ -39,10 +39,14 @@ const GENERATION_OPTION_KEYS = new Set([
 export function registerContextHookAdapter(input: {
   readonly ctx: V2RuntimePluginContext
   readonly runtime: V2Runtime
+  // Task 27: the request-level tool filter (hidden V1 tools entries) runs
+  // before the transforms so they see the filtered tool set.
+  readonly filterTools?: (event: V2HookContextEvent) => void
 }): void {
   const ctx = input.ctx as V2ContextHookRegistrationContext
   void ctx.session.hook("context", async (event) => {
     markHook("context", event.sessionID)
+    input.filterTools?.(event)
     await applySystemTransform(input.runtime.engine, event)
     await applyMessagesTransform(input.runtime.engine, event)
     await applyParamsTransform(input.runtime.engine, event)

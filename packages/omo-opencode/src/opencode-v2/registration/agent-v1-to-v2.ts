@@ -10,7 +10,8 @@
 // carried: they flow through the chat.params path of task 17.
 
 import type { PlanAgentConfig } from "./registration-plan"
-import type { AgentReplayItem, AgentReplayPermissionRule } from "./agent-replay-types"
+import type { AgentReplayItem } from "./agent-replay-types"
+import { permissionRulesOfV1Agent } from "./permissions"
 
 export type AgentMode = "primary" | "subagent" | "all"
 
@@ -33,74 +34,22 @@ function modelRefOfV1(model: unknown): { readonly id: string; readonly providerI
   return { providerID: model.slice(0, separator), id: model.slice(separator + 1) }
 }
 
-type PermissionEffect = AgentReplayPermissionRule["effect"]
-
-function effectOf(value: unknown): PermissionEffect | undefined {
-  return value === "allow" || value === "deny" || value === "ask" ? value : undefined
-}
-
-// The V1 permission map keys are tool or action patterns; a flat value is the
-// whole-resource rule and a scoped value renders one rule per scope, mirroring
-// the V1 bash shape. First occurrence wins per (action, resource) pair, the
-// V1 first-match semantics.
-function permissionRulesOfMap(map: Readonly<Record<string, unknown>>, rules: AgentReplayPermissionRule[]): void {
-  const seen = new Set<string>()
-  const push = (action: string, resource: string, effect: PermissionEffect): void => {
-    const key = `${action}\u0000${resource}`
-    if (seen.has(key)) return
-    seen.add(key)
-    rules.push({ action, resource, effect })
-  }
-  for (const [action, value] of Object.entries(map)) {
-    const effect = effectOf(value)
-    if (effect !== undefined) {
-      push(action, "*", effect)
-      continue
-    }
-    if (typeof value !== "object" || value === null || Array.isArray(value)) continue
-    for (const [resource, scoped] of Object.entries(value as Readonly<Record<string, unknown>>)) {
-      const scopedEffect = effectOf(scoped)
-      if (scopedEffect !== undefined) push(action, resource, scopedEffect)
-    }
-  }
-}
-
-// The V2 item's permissions ruleset: the V1 permission map first, then the
-// V1 tools map (enabled renders allow, disabled renders deny), then the
-// V1 default-allow fallback. The V1 host allows every tool an agent's maps
-// leave unlisted; the OpenCode 2 host falls back to ask for unmatched actions
-// (live evidence: scenario B's read call rejected with permission.rejected
-// under the registered sisyphus ruleset, and the plugin tools vanished from
-// the model request), so the ruleset ends with a wildcard allow that explicit
-// rules keep precedence over through the host's ordered first-match
-// evaluation.
-function permissionRulesOfV1Agent(entry: PlanAgentConfig): ReadonlyArray<AgentReplayPermissionRule> {
-  const rules: AgentReplayPermissionRule[] = []
-  if (typeof entry.permission === "object" && entry.permission !== null) {
-    permissionRulesOfMap(entry.permission as Readonly<Record<string, unknown>>, rules)
-  }
-  if (typeof entry.tools === "object" && entry.tools !== null) {
-    const enabled: Record<string, unknown> = {}
-    const disabled: Record<string, unknown> = {}
-    for (const [name, value] of Object.entries(entry.tools as Readonly<Record<string, unknown>>)) {
-      if (value === true) enabled[name] = "allow"
-      if (value === false) disabled[name] = "deny"
-    }
-    permissionRulesOfMap(enabled, rules)
-    permissionRulesOfMap(disabled, rules)
-  }
-  rules.push({ action: "*", resource: "*", effect: "allow" })
-  return rules
-}
-
 // Mutates the editor item in place, exactly the fields the V1 pipeline
 // produced and the V2 schema carries; the host-owned request settings are
-// left untouched. A name_only entry (the plan-diff promotion of an unchanged
+// left untouched. The ruleset is complete at write time: the per-agent rules
+// plus the plan's global every-agent tool rules (task 27) render through the
+// one owner in permissions.ts, so the later permission step has no editor
+// work left. A name_only entry (the plan-diff promotion of an unchanged
 // host agent whose V2 display name differs from the V1 key name) rewrites
 // ONLY the name: the agent's other fields stay host-owned, so the lossy
 // V1-permission round-trip never touches a host agent the pipeline did not
 // edit.
-export function assignAgentItem(item: AgentReplayItem, key: string, entry: PlanAgentConfig): void {
+export function assignAgentItem(
+  item: AgentReplayItem,
+  key: string,
+  entry: PlanAgentConfig,
+  globalTools: Readonly<Record<string, boolean>> = {},
+): void {
   item.name = typeof entry.name === "string" && entry.name !== "" ? entry.name : key
   if (entry.name_only === true) return
   item.mode = agentModeOfV1(typeof entry.mode === "string" ? entry.mode : undefined)
@@ -111,5 +60,5 @@ export function assignAgentItem(item: AgentReplayItem, key: string, entry: PlanA
   if (typeof system === "string") item.system = system
   const description = entry.description
   if (typeof description === "string") item.description = description
-  item.permissions = permissionRulesOfV1Agent(entry)
+  item.permissions = permissionRulesOfV1Agent(entry, globalTools).rules
 }

@@ -22,12 +22,15 @@ import type { PlanStep } from "./plan-steps"
 const AGENT_STEP_ID = "agent-registration"
 const LOG_MARKER = "[opencode-v2] agent-registration"
 
-// Records the pristine editor value before any edit. Ids this runtime already
-// registered are filtered out: the host hands the transform a fresh value
-// that never contains them, while the fake editor keeps live mutations in
-// place (documented fake deviation), so the filter is what keeps the recorded
-// base free of the plugin's own output on both surfaces. The default the
-// runtime applied itself is neutralized for the same reason.
+// Records the pristine editor value before any edit. Ids this runtime created
+// (the plan's added section) are filtered out: the host hands the transform a
+// fresh value that contains them after a reload, while the fake editor keeps
+// live mutations in place, so the filter is what keeps the recorded base free
+// of the plugin's own output on both surfaces. Host agents the step only
+// updated (the name_only entries) stay base material: filtering them too made
+// every re-record shrink the base until their plan entries vanished (surfaced
+// by the task-27 command step's extra recompute). The default the runtime
+// applied itself is neutralized for the same reason.
 function recordPristineAgents(
   editor: AgentReplayEditor,
   snapshot: HostStateSnapshot,
@@ -43,12 +46,13 @@ function recordPristineAgents(
 // Upserts every plan agent in plan key order (added then modified; the first
 // write per canonical id wins, which drops the hidden config-key aliases and
 // keeps one visible V2 agent per id), removes the removed ids, applies the
-// plan default. Returns the written ids so the runtime can keep the recorded
-// base pristine on later replays. The plan's modified entries already carry
-// the V1 key names (plan-diff withV1AgentNames); name_only entries rewrite
-// only the name so a host agent the pipeline never edited keeps its own
-// fields.
+// plan default. Returns the created ids so the runtime can keep the recorded
+// base pristine on later replays: only the added section is the plugin's own
+// output. The plan's modified entries already carry the V1 key names
+// (plan-diff withV1AgentNames); name_only entries rewrite only the name so a
+// host agent the pipeline never edited keeps its own fields.
 function replayAgentPlan(editor: AgentReplayEditor, plan: RegistrationPlan, logWrites: boolean): ReadonlySet<string> {
+  const created = new Set<string>(Object.keys(plan.agents.added).map(canonicalAgentKey))
   const written = new Set<string>()
   const upserts: ReadonlyArray<readonly [string, PlanAgentConfig]> = [
     ...Object.entries(plan.agents.added),
@@ -59,7 +63,7 @@ function replayAgentPlan(editor: AgentReplayEditor, plan: RegistrationPlan, logW
     const id = canonicalAgentKey(key)
     if (written.has(id)) continue
     written.add(id)
-    editor.update(id, (item: AgentReplayItem) => assignAgentItem(item, key, entry))
+    editor.update(id, (item: AgentReplayItem) => assignAgentItem(item, key, entry, plan.tools))
     if (logWrites)
       writes.push(`${id}(name ${String(entry.name ?? key)}${entry.name_only === true ? " name_only" : ""})`)
   }
@@ -68,7 +72,7 @@ function replayAgentPlan(editor: AgentReplayEditor, plan: RegistrationPlan, logW
     editor.default(canonicalAgentKey(plan.defaultAgent))
   }
   if (logWrites) log(`${LOG_MARKER}: replayed ${String(writes.length)} agents: ${writes.join(", ")}`)
-  return written
+  return created
 }
 
 // Builds the agent recompute step; the runtime adapter registers it on the
