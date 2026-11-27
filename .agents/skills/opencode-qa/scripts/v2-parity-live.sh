@@ -385,6 +385,16 @@ oqa_pl_main() {
   fi
   [ -f "$REPO_ROOT/dist/index.js" ] || { oqa_pl_fail "dist/index.js missing (run without --no-build)"; return 1; }
 
+  # The lsp MCP resolves the built lsp-tools-mcp dist exactly like V1; build it
+  # when missing so the lsp tier registers and L-05 can prove lsp_status.
+  if [ ! -f "$REPO_ROOT/packages/lsp-tools-mcp/dist/cli.js" ]; then
+    oqa_pl_log "building lsp-tools-mcp (dist missing)..."
+    flock /tmp/oqa-w2-build.lock -c "cd '$REPO_ROOT' && bun run build:lsp-tools-mcp" > "$WORK_BUILD_LOG" 2>&1 || {
+      oqa_pl_fail "bun run build:lsp-tools-mcp failed; log: $WORK_BUILD_LOG"
+      return 1
+    }
+  fi
+
   local sys_cmd="" sys_ver_before="" sys_ver_after="" sys_opencode="absent"
   sys_cmd="$(command -v opencode)"
   if [ -n "$sys_cmd" ]; then
@@ -409,7 +419,10 @@ oqa_pl_main() {
   # "[opencode]" bracketed harness block carries the plugin harness keys.
   local omo_cfg="$OQA_V2_SANDBOX/home/.omo/omo.jsonc"
   mkdir -p "$(dirname "$omo_cfg")"
-  printf '%s\n' '{ "agents": { "atlas": { "model": "anthropic/claude-sonnet-5" } }, "[opencode]": { "hashline_edit": true, "disabled_tools": ["look_at"] } }' > "$omo_cfg"
+  # mcp_env_allowlist is user-layer only (security) and lives INSIDE the
+  # "[opencode]" harness block: the unified omo schema drops unknown
+  # top-level keys, so a top-level allowlist is silently ignored.
+  printf '%s\n' '{ "agents": { "atlas": { "model": "anthropic/claude-sonnet-5" } }, "[opencode]": { "hashline_edit": true, "disabled_tools": ["look_at"], "mcp_env_allowlist": ["OQA_SECRET_TOKEN"] } }' > "$omo_cfg"
   oqa_pl_log "sandbox omo config written: $omo_cfg"
   local plugin_dir cfg_dir cfg_body
   plugin_dir="${OQA_V2_PLUGIN_DIR:-$REPO_ROOT}"
@@ -448,6 +461,22 @@ JSON
   done
   printf 'parity row nine file\nsecond line\n' > "$PROJ_DIR/parity-file.txt"
 
+  # ---- L-05/L-23 MCP surfaces (plan task 26) ----
+  # A per-run invented token value lives ONLY in the sandbox (the token file
+  # dies with it); the .mcp.json carries the ${VAR} reference and sits in the
+  # serve cwd, which is the project scope the tier-2 loader scans. The probe
+  # command is the real lsp-tools-mcp stdio server, so it connects cleanly
+  # (no host-log error lines), lists in GET /api/mcp and carries the token in
+  # its registry environment. The serve process and the plugin inherit the
+  # exported value so the V1 pipeline expands the reference through the
+  # allowlist.
+  mkdir -p "$OQA_V2_SANDBOX/tmp"
+  OQA_PL_SECRET_TOKEN="$(head -c 18 /dev/urandom | base64 | tr -d '\n=+/')"
+  printf '%s' "$OQA_PL_SECRET_TOKEN" > "$OQA_V2_SANDBOX/tmp/oqa-secret-token.txt"
+  printf '%s\n' "{\"mcpServers\": {\"oqa-secret-probe\": {\"type\": \"stdio\", \"command\": \"node\", \"args\": [\"$REPO_ROOT/packages/lsp-tools-mcp/dist/cli.js\", \"mcp\"], \"env\": {\"OQA_SECRET_TOKEN\": \"\${OQA_SECRET_TOKEN}\"}}}}" \
+    > "$OQA_V2_SANDBOX/tmp/.mcp.json"
+  oqa_pl_log "sandbox .mcp.json written with the OQA_SECRET_TOKEN probe reference"
+
   printf '%s\n' '{"steps":[{"text":"OQA_A_FINAL: plain text answer from the fake model"}]}' > "$WORK_DIR/scenario-a.json"
   printf '%s\n' "{\"steps\":[{\"tool_call\":{\"name\":\"read\",\"arguments\":{\"path\":\"$PROJ_DIR/parity-file.txt\"}}},{\"text\":\"OQA_B_FINAL done reading\"}]}" > "$WORK_DIR/scenario-b.json"
   printf '%s\n' "{\"steps\":[{\"tool_call\":{\"name\":\"shell\",\"arguments\":{\"command\":\"cat $PROJ_DIR/parity-file.txt\"}}},{\"text\":\"OQA_C_FINAL done catting\"}]}" > "$WORK_DIR/scenario-c.json"
@@ -457,6 +486,7 @@ JSON
 
   local server_start_ms plugin_first_seen_ms="" i st resp
   server_start_ms="$(date +%s%3N)"
+  export OQA_SECRET_TOKEN="$OQA_PL_SECRET_TOKEN"
   oqa_v2_serve_start || return 1
   oqa_v2_wait_ready 60 || { oqa_pl_fail "server never became ready"; cat "$OQA_V2_SANDBOX/serve.out" >&2; return 1; }
   for i in $(seq 1 60); do
@@ -522,6 +552,8 @@ JSON
   mkdir -p "$EV_LIVE"
   oqa_v2_api GET "/api/session/$sid_a/context" > "$EV_LIVE/context-a.json" 2>/dev/null || true
   local context_a_file="$EV_LIVE/context-a.json"
+  oqa_v2_api GET /api/mcp > "$EV_LIVE/mcp-api.json" 2>/dev/null || printf '{"data":[]}' > "$EV_LIVE/mcp-api.json"
+  local mcp_api_capture="$EV_LIVE/mcp-api.json"
 
   local serve_location="$OQA_V2_SANDBOX/tmp"
   cat > "$WORK_DIR/manifest.json" <<JSON
@@ -546,6 +578,8 @@ JSON
   "agentsBeforeFile": "$agents_before",
   "agentsAfterFile": "$agents_after",
   "contextAFile": "$context_a_file",
+  "mcpApiCaptureFile": "$mcp_api_capture",
+  "secretTokenFile": "$OQA_V2_SANDBOX/tmp/oqa-secret-token.txt",
   "hotAgentId": "$hot_agent",
   "scriptedSteps": { "a": 1, "b": 2, "c": 2 }
 }
@@ -618,6 +652,7 @@ JSON
 
   # ---- shutdown, post-shutdown log copies, teardown, post phase ----
   oqa_v2_serve_stop
+  unset OQA_SECRET_TOKEN
   sleep 1
   if [ -n "$sys_cmd" ]; then sys_ver_after="$("$sys_cmd" --version 2>/dev/null | tail -1)"; fi
   db_after="$(oqa_v2_real_db_digest)"

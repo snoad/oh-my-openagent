@@ -14,6 +14,7 @@ import type { PlanSourceContext } from "../registration/plan-source-context"
 import { v2ToolRegistrationAdapter } from "./adapt-tool-registration"
 import { v2TodoAdapter } from "./adapt-todo-registration"
 import { v2AgentRegistrationAdapter } from "./adapter-agent-registration"
+import { v2McpRegistrationAdapter } from "./adapter-mcp-registration"
 import { v2ProviderModelAdapterRegistration } from "./provider-model-adapter"
 import { markHook } from "./hook-markers"
 import type { V2Runtime } from "./stop-v2-runtime"
@@ -161,4 +162,5 @@ export const v2AdapterRegistrations: readonly V2AdapterRegistration[] = [
   v2TodoAdapter,
   v2ToolRegistrationAdapter,
   v2AgentRegistrationAdapter,
+  v2McpRegistrationAdapter,
 ]

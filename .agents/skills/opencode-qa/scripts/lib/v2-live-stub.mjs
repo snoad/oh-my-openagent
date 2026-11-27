@@ -43,6 +43,10 @@ const server = http.createServer((req, res) => {
     sendFile(res, path.join(cannedDir, "plugin.json"))
     return
   }
+  if (req.method === "GET" && req.url === "/api/mcp") {
+    sendFile(res, path.join(cannedDir, "mcp.json"))
+    return
+  }
   if (req.method === "GET" && req.url === "/api/agent") {
     sendFile(res, path.join(cannedDir, "agents.json"))
     return

@@ -10,21 +10,26 @@
 # {"status":"error","content":null,"error":{"type":"unknown","message":...}}
 # with the V1 guard message byte-for-byte, and the cleanup stats lines are
 # present in serve.out. Coverage:
-#   good live run    L-01/L-02/L-03/L-04/L-07/L-08/L-09/L-11/L-20/L-21/L-22/L-24
-#                    PASS (the stub models the registered state: the agents
-#                    captures derive from the V1 baseline fixtures, the main
-#                    scenario A request carries the sisyphus system first line
-#                    and the registered tool set minus the disabled_tools
-#                    entry), L-05/L-06/L-23/L-15/L-18 pending
+#   good live run    L-01/L-02/L-03/L-04/L-05/L-07/L-08/L-09/L-11/L-20/L-21/
+#                    L-22/L-23/L-24 PASS (the stub models the registered
+#                    state: the agents captures derive from the V1 baseline
+#                    fixtures, the main scenario A request carries the
+#                    sisyphus system first line and the registered tool set
+#                    minus the disabled_tools entry, GET /api/mcp lists the
+#                    four tier-1 servers and the connected secret probe, and
+#                    the L-05 tools/list half drives the REAL lsp server),
+#                    L-06/L-15/L-18 pending
 #   good post run    L-15 PASS (ambient sessions tolerated; absent system
 #                    opencode = version clause not applicable), L-11 PASS
 #                    (stats line, translated > 0), L-24 PASS (bound holds),
 #                    L-10 PASS (scripted grep call, string result), L-16 PASS
 #                    (disabled_tools entry across the host config change)
 #   broken runs      one targeted mutation per FAIL case (see the case list
-#                    in main) plus the L-15 absent-opencode PASS case (with
-#                    its evidence line), the L-15 version-changed FAIL case
-#                    and the L-22 process-wide STOP verdict
+#                    in main: L-05 server/tool missing, L-23 token leak plus
+#                    the two vacuous-pass guards) plus the L-15
+#                    absent-opencode PASS case (with its evidence line), the
+#                    L-15 version-changed FAIL case and the L-22
+#                    process-wide STOP verdict
 #   driver tests     truthful final line, --strict gate, L-18 verdict
 #                    write-back, bun/ junk guard, reload-for-stats trigger
 #                    (step 1, step 2, never) (driver sourced in import mode;
@@ -161,6 +166,20 @@ write_good_dir() {
   cat > "$dir/plugin.json" <<JSON
 {"location":{"directory":"$dir"},"data":[{"id":"oh-my-openagent","source":{"type":"local","path":"$dir"},"features":{"server":true},"state":{"status":"active"}}]}
 JSON
+  # The real 2.4.1 GET /api/mcp answer shape is the {location, data} envelope
+  # with McpServer rows ({name, status: {status}}); both stdio servers model
+  # the connected state of the real lsp-tools-mcp server the driver registers
+  # as the secret probe.
+  cat > "$dir/mcp.json" <<JSON
+{"location":{"directory":"$dir"},"data":[
+ {"name":"websearch","status":{"status":"connected"}},
+ {"name":"context7","status":{"status":"connected"}},
+ {"name":"grep_app","status":{"status":"connected"}},
+ {"name":"lsp","status":{"status":"connected"}},
+ {"name":"oqa-secret-probe","status":{"status":"connected"}}]}
+JSON
+  # The L-23 per-run token value (a stub value, never a real secret).
+  printf 'st9UBq7wXk2Rm4Zq' > "$dir/sandbox-token.txt"
   cat > "$dir/context-ses_stub_b.json" <<JSON
 {"data":[{"id":"m1","type":"user","text":"Read parity-file.txt"},{"id":"m2","type":"assistant","agent":"build","content":[{"type":"tool","id":"call_1","name":"read","state":{"status":"completed","input":{"path":"$dir/proj-a/parity-file.txt"},"content":[{"type":"text","text":"1#NS|parity row nine file\n2#HP|second line"}],"metadata":{"truncated":false}}}]}]}
 JSON
@@ -205,7 +224,7 @@ LOG
   # content and the registered tool set derived from the V1 baseline fixture
   # (host-only names and the disabled_tools entry excluded); the aux request
   # keeps the host placeholder.
-  printf '%s\n' '{ "[opencode]": { "disabled_tools": ["look_at"] } }' > "$dir/omo.jsonc"
+  printf '%s\n' '{ "[opencode]": { "disabled_tools": ["look_at"], "mcp_env_allowlist": ["OQA_SECRET_TOKEN"] } }' > "$dir/omo.jsonc"
   local sisyphus_line identity_line tools_json
   sisyphus_line="$(oqa_st_sisyphus_first_line)"
   identity_line="$(oqa_st_sisyphus_identity_line)"
@@ -322,6 +341,8 @@ SSE
   "contextAFile": "$dir/context-a.json",
   "hotAgentId": "oqa-hot-agent",
   "sandboxOmoConfig": "$dir/omo.jsonc",
+  "mcpApiCaptureFile": "$dir/mcp.json",
+  "secretTokenFile": "$dir/sandbox-token.txt",
   "sandboxPath": "$dir/sandbox-gone",
   "scriptedSteps": {"a": 1, "b": 2, "c": 2, "d": 2, "e": 1}
 }
@@ -387,7 +408,7 @@ main() {
   start_stub "$good" || { oqa_st_fail "stub did not start"; return 1; }
   run_runner "$good" "$good/manifest.json" "$good/out-live" || true
   local results="$good/out-live/results.json"
-  for row in L-01 L-02 L-03 L-04 L-07 L-08 L-09 L-11 L-20 L-21 L-22 L-24; do
+  for row in L-01 L-02 L-03 L-04 L-05 L-07 L-08 L-09 L-11 L-20 L-21 L-22 L-23 L-24; do
     expect_row "$results" "$row" "true" "good live"
   done
   expect_row "$results" "L-15" "pending" "good live"
@@ -489,6 +510,21 @@ main() {
     "oqa_st_del_stats_lines '$TMP/case-L-24-stats-line-missing/serve.out'" 1
   broken_case "L-24" "bound-violated" \
     "oqa_st_set_stats '$TMP/case-L-24-bound-violated/serve.out' '$TMP/case-L-24-bound-violated/proj-a' 42 40 10 2 999 0" 1
+
+  # L-05 FAIL case: a tier-1 server missing from both GET /api/mcp and the
+  # host log (the lsp_status tools/list half drives the REAL lsp server, so
+  # it has no offline mutation seam; it runs in every case).
+  broken_case "L-05" "lsp-server-missing" \
+    "jq '.data |= map(select(.name != \"lsp\"))' '$TMP/case-L-05-lsp-server-missing/mcp.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-05-lsp-server-missing/mcp.json' && sed -i '/server=lsp /d' '$TMP/case-L-05-lsp-server-missing/host.log'"
+
+  # L-23 FAIL cases: the token value leaks into serve.out, and the two
+  # vacuous-pass guards (missing token file, missing allowlist entry).
+  broken_case "L-23" "token-in-serve-out" \
+    "printf '%s\n' 'probe env {OQA_SECRET_TOKEN: st9UBq7wXk2Rm4Zq}' >> '$TMP/case-L-23-token-in-serve-out/serve.out'"
+  broken_case "L-23" "token-file-missing" \
+    "jq 'del(.secretTokenFile)' '$TMP/case-L-23-token-file-missing/manifest.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-23-token-file-missing/manifest.json'"
+  broken_case "L-23" "allowlist-missing" \
+    "jq 'del(.\"[opencode]\".\"mcp_env_allowlist\")' '$TMP/case-L-23-allowlist-missing/omo.jsonc' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-23-allowlist-missing/omo.jsonc'"
 
   # 4. L-15 broken post phases: sandbox still exists, and a real leak row.
   local dir="$TMP/case-L-15-sandbox"

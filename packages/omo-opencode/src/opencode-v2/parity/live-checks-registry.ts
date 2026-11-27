@@ -7,6 +7,8 @@ import { checkToolHooks } from "./live-check-tool-hooks"
 import { checkToolRegistrationParity } from "./live-checks-tools"
 import { checkPluginGrepCall } from "./live-checks-tools-grep"
 import { checkDisabledToolsEffect } from "./live-checks-tools-disabled"
+import { checkMcpTiers } from "./live-checks-mcp"
+import { checkMcpSecretNonDisclosure } from "./live-checks-mcp-secret"
 import { checkEventPipeline, checkTranslatorBudget } from "./live-checks-events"
 import { checkHostNotice, checkLocationEngines } from "./live-checks-host"
 import { checkIsolation } from "./live-checks-isolation"
@@ -21,6 +23,7 @@ const CHECKS: Readonly<Record<string, LiveCheck>> = {
   "L-02": checkNoPluginLoadError,
   "L-03": checkAgents,
   "L-04": checkToolRegistrationParity,
+  "L-05": checkMcpTiers,
   "L-07": checkChatMessageAdmission,
   "L-08": checkSystemTransform,
   "L-09": checkToolHooks,
@@ -31,6 +34,7 @@ const CHECKS: Readonly<Record<string, LiveCheck>> = {
   "L-20": checkPluginActiveWithin60s,
   "L-21": checkHostNotice,
   "L-22": checkLocationEngines,
+  "L-23": checkMcpSecretNonDisclosure,
   "L-24": checkTranslatorBudget,
 }
 
@@ -41,13 +45,11 @@ const OTHER_SCRIPT_OWNERS: Readonly<Record<string, string>> = {
 }
 
 const PENDING_REASONS: Readonly<Record<string, string>> = {
-  "L-05": "MCP registration lands with plan task 27 (wave 3)",
   "L-06": "command registration lands with plan task 27 (wave 3)",
   "L-12":
     "idle continuation lands with plan task 31 (wave 4); its check also asserts the total fake model requests for the session stay within the scripted steps plus 2",
   "L-13": "task tool subagent parity lands with plan task 32 (wave 4)",
   "L-14": "plugin reload cleanup lands with plan task 33 (wave 4)",
-  "L-23": "MCP secret non-disclosure lands with plan task 27 (wave 3)",
   "L-25": "explicit compaction parity lands with plan task 31 (wave 4)",
   "L-26": "background parent wake lands with plan task 32 (wave 4)",
 }

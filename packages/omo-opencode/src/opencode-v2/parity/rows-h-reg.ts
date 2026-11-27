@@ -1,5 +1,6 @@
 import { hHookConfigRows } from "./rows-h-hook-config"
 import { hRegAgentRows } from "./rows-h-reg-agents"
+import { hRegMcpRows } from "./rows-h-reg-mcp"
 import { hRegPlanRows } from "./rows-h-reg-plan"
 import { hRegProviderModelRows } from "./rows-h-reg-provider-model"
 import { hRegSnapshotRows } from "./rows-h-reg-snapshot"
@@ -22,4 +23,5 @@ export const hRegWaveRows: ParityRow[] = [
   ...hRegToolGatedRows,
   ...hRegTodoRows,
   ...hRegProviderModelRows,
+  ...hRegMcpRows,
 ]
