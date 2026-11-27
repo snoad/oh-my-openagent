@@ -1,9 +1,24 @@
-// V1 plan entry -> OpenCode 2 provider and model mirrors (task 28 of the
+// V1 plan entry -> OpenCode 2 provider and model items (task 28 of the
 // opencode-v2-compat plan). Tolerant readers over the plain JSON plan.provider
 // section (the final V1 provider map the config pipeline produced) and the
-// builders for the structural editor mirrors. The pinned @opencode/schema
-// 2.4.1 types carry effect brands, so the registration crosses as plain
-// mirrors (the sanctioned local-structural-types branch, task-9 precedent).
+// builders for the host items. Every builder starts from the pinned
+// @opencode/schema 2.4.1 default object (Model.Info.default /
+// Provider.Info.empty field sets) and then applies the V1 overrides, so each
+// contribution is a COMPLETE Model.Info / Provider.Info item: the host sorts
+// models by time.released and reads cost, status, enabled, limit,
+// capabilities and variants in its pickers, and providers need activation and
+// package. The real SDK types come through the root type import; the effect
+// string brands cross through the named helpers of provider-model-info.
+
+import type { Model, Provider } from "@opencode/plugin"
+
+import {
+  modelIDBrand,
+  moneyUSDPerMillion,
+  providerIDBrand,
+  type MutableModelInfo,
+  type MutableProviderInfo,
+} from "./provider-model-info"
 
 type V1PlanEntry = Readonly<Record<string, unknown>>
 
@@ -11,11 +26,13 @@ function isRecord(value: unknown): value is V1PlanEntry {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function asRecord(value: unknown): V1PlanEntry {
+// Shared tolerant readers of the plain JSON plan sections; the merge paths
+// outside this module reuse them to write only V1-expressed fields.
+export function asRecord(value: unknown): V1PlanEntry {
   return isRecord(value) ? value : {}
 }
 
-function asString(value: unknown): string | undefined {
+export function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined
 }
 
@@ -31,7 +48,7 @@ function asBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined
 }
 
-function asStringRecord(value: unknown): Record<string, string> | undefined {
+export function asStringRecord(value: unknown): Record<string, string> | undefined {
   if (!isRecord(value)) return undefined
   const headers: Record<string, string> = {}
   for (const [key, entry] of Object.entries(value)) {
@@ -41,9 +58,8 @@ function asStringRecord(value: unknown): Record<string, string> | undefined {
   return Object.keys(headers).length > 0 ? headers : undefined
 }
 
-// V1 model-config keys the OpenCode 2 model schema can express. V1 per-model
-// cost objects (the V2 cost is a tagged per-context-size table) and the V1
-// per-model provider.npm override have no counterpart; an entry carrying none
+// V1 model-config keys the OpenCode 2 model schema can express. The V1
+// per-model provider.npm override has no counterpart; an entry carrying none
 // of the expressible keys is skipped by the registration (candidate LIM-21).
 const EXPRESSIBLE_MODEL_KEYS = [
   "name",
@@ -60,21 +76,35 @@ export function isExpressibleModelEntry(entry: unknown): boolean {
   return EXPRESSIBLE_MODEL_KEYS.some((key) => record[key] !== undefined)
 }
 
-// Writes the expressible V1 model-config fields onto the mirror; used for both
+// The V1 releaseDate renders as milliseconds since the epoch (finite number
+// or ISO date string); entries without one keep the SDK default 0.
+function releasedMsOf(target: MutableModelInfo, value: unknown): void {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Date.parse(value) : Number.NaN
+  if (Number.isFinite(parsed)) target.time = { released: parsed }
+}
+
+// The V1 flat cost object renders as one Model.Info cost row (no tier: the
+// row applies to every context size) when input and output are finite.
+function costRowOf(target: MutableModelInfo, value: unknown): void {
+  const cost = asRecord(value)
+  const input = asNumber(cost["input"])
+  const output = asNumber(cost["output"])
+  if (input === undefined || output === undefined) return
+  const row: MutableModelInfo["cost"][number] = {
+    input: moneyUSDPerMillion(input),
+    output: moneyUSDPerMillion(output),
+    cache: {
+      read: moneyUSDPerMillion(asNumber(cost["cache_read"]) ?? 0),
+      write: moneyUSDPerMillion(asNumber(cost["cache_write"]) ?? 0),
+    },
+  }
+  target.cost = [row]
+}
+
+// Writes the expressible V1 model-config fields onto the item; used for both
 // fresh contributions (provider step) and overrides onto present models
 // (model step). Limit numbers fall back to the target's current values.
-export function writeModelMirrorFields(
-  target: {
-    name: string
-    limit?: { context: number; output: number }
-    capabilities?: { tools?: boolean; input?: string[]; output?: string[] }
-    temperature?: boolean
-    settings?: Record<string, unknown>
-    headers?: Record<string, string>
-    [key: string]: unknown
-  },
-  entry: unknown,
-): void {
+export function writeModelMirrorFields(target: MutableModelInfo, entry: unknown): void {
   const record = asRecord(entry)
   const name = asString(record["name"])
   if (name !== undefined) target.name = name
@@ -83,74 +113,63 @@ export function writeModelMirrorFields(
   const output = asNumber(limit["output"])
   if (context !== undefined || output !== undefined) {
     target.limit = {
-      context: context ?? target.limit?.context ?? 0,
-      output: output ?? target.limit?.output ?? 0,
+      context: context ?? target.limit.context,
+      output: output ?? target.limit.output,
     }
   }
   const modalities = asRecord(record["modalities"])
   const input = asStringArray(modalities["input"])
   const outputList = asStringArray(modalities["output"])
   const toolCall = asBoolean(record["tool_call"])
-  if (input.length > 0 || outputList.length > 0 || toolCall !== undefined) {
-    const capabilities = { ...(target.capabilities ?? {}) }
+  const temperature = asBoolean(record["temperature"])
+  if (input.length > 0 || outputList.length > 0 || toolCall !== undefined || temperature !== undefined) {
+    const capabilities = { ...target.capabilities }
     if (toolCall !== undefined) capabilities.tools = toolCall
     if (input.length > 0) capabilities.input = [...input]
     if (outputList.length > 0) capabilities.output = [...outputList]
+    if (temperature !== undefined) capabilities.temperature = temperature
     target.capabilities = capabilities
   }
-  const temperature = asBoolean(record["temperature"])
-  if (temperature !== undefined) target.temperature = temperature
+  costRowOf(target, record["cost"])
+  releasedMsOf(target, record["releaseDate"])
   const options = asRecord(record["options"])
-  if (Object.keys(options).length > 0) target.settings = { ...(target.settings ?? {}), ...options }
+  if (Object.keys(options).length > 0) Object.assign(target, { settings: { ...(target.settings ?? {}), ...options } })
   const headers = asStringRecord(record["headers"])
   if (headers !== undefined) target.headers = { ...(target.headers ?? {}), ...headers }
 }
 
-export type BuiltModelMirror = {
-  readonly id: string
-  readonly modelID: string
-  readonly providerID: string
-  name: string
-  enabled: boolean
-  limit: { context: number; output: number }
-  capabilities: { tools: boolean; input: string[]; output: string[] }
-  [key: string]: unknown
-}
-
-export function buildModelMirror(providerID: string, modelID: string, entry: unknown): BuiltModelMirror {
-  const mirror: BuiltModelMirror = {
-    id: modelID,
-    modelID,
-    providerID,
+// The SDK default field set (Model.Info.default) with the V1 overrides.
+export function buildModelMirror(providerID: string, modelID: string, entry: unknown): Model.Info {
+  const mirror: MutableModelInfo = {
+    id: modelIDBrand(modelID),
+    modelID: modelIDBrand(modelID),
+    providerID: providerIDBrand(providerID),
     name: modelID,
+    capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
+    variants: [],
+    time: { released: 0 },
+    cost: [],
+    status: "active",
     enabled: true,
-    limit: { context: 0, output: 0 },
-    capabilities: { tools: true, input: ["text"], output: ["text"] },
+    limit: { context: 200000, output: 32000 },
   }
   writeModelMirrorFields(mirror, entry)
   return mirror
 }
 
-export type BuiltProviderMirror = {
-  readonly id: string
-  name: string
-  package?: string
-  settings?: Record<string, unknown>
-  headers?: Record<string, string>
-  [key: string]: unknown
-}
-
-export function buildProviderMirror(providerID: string, entry: unknown): BuiltProviderMirror {
+// The SDK default field set (Provider.Info.empty) with the V1 overrides.
+export function buildProviderMirror(providerID: string, entry: unknown): Provider.Info {
   const record = asRecord(entry)
-  const mirror: BuiltProviderMirror = { id: providerID, name: asString(record["name"]) ?? providerID }
-  const npm = asString(record["npm"])
-  if (npm !== undefined) mirror["package"] = npm
-  const options = asRecord(record["options"])
-  if (Object.keys(options).length > 0) {
-    mirror.settings = { ...options }
-    const headers = asStringRecord(options["headers"])
-    if (headers !== undefined) mirror.headers = headers
+  const mirror: MutableProviderInfo = {
+    id: providerIDBrand(providerID),
+    name: asString(record["name"]) ?? providerID,
+    activation: "auto",
+    package: asString(record["npm"]) ?? "",
   }
+  const options = asRecord(record["options"])
+  if (Object.keys(options).length > 0) Object.assign(mirror, { settings: { ...options } })
+  const headers = asStringRecord(options["headers"])
+  if (headers !== undefined) mirror.headers = headers
   return mirror
 }
 

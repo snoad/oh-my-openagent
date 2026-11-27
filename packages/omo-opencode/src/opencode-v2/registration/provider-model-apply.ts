@@ -2,9 +2,13 @@
 // (task 28). The provider applier adds or merges each plan.provider entry
 // with the editor.add({ info, models }) shape; the model applier writes the
 // expressible overrides onto present models, disables the whitelist and
-// blacklist restrictions and applies the plan.model default. The record
-// converters build the task-22 snapshot values from the pre-edit editor
-// state.
+// blacklist restrictions and applies the plan.model default. Every built item
+// passes the completeness guard BEFORE it reaches the host editor: an invalid
+// entry is skipped and reported through the LIM-21 unsupported-entry
+// reporter, so the host never sees a partial Model.Info / Provider.Info (the
+// host reads time.released in its model sort and crashes on entries without
+// it). The record converters build the task-22 snapshot values from the
+// pre-edit editor state.
 
 import type {
   ModelRestrictionEditor,
@@ -13,6 +17,9 @@ import type {
   RegisteredProviderInfo,
 } from "./provider-model"
 import {
+  asRecord,
+  asString,
+  asStringRecord,
   buildModelMirror,
   buildProviderMirror,
   defaultModelRef,
@@ -20,8 +27,8 @@ import {
   modelEntriesOf,
   restrictionIdsOf,
   writeModelMirrorFields,
-  type BuiltProviderMirror,
 } from "./provider-model-contributions"
+import { isValidModelInfo, isValidProviderInfo } from "./provider-model-validate"
 import type { RegistrationPlan } from "./registration-plan"
 import type {
   ModelSnapshotValue,
@@ -30,7 +37,9 @@ import type {
   SnapshotProviderRecord,
 } from "./snapshot-inputs"
 
-export type UnsupportedReporter = (providerID: string, modelID: string) => void
+// One string per skipped entry ("providerID/modelID", or the bare providerID
+// for a provider-level entry); the reporter dedupes and logs.
+export type UnsupportedReporter = (entry: string) => void
 
 function modelSnapshotOf(model: RegisteredModelInfo): SnapshotModelRecord {
   return { id: model.id, modelID: model.modelID, providerID: model.providerID, name: model.name }
@@ -49,12 +58,19 @@ export function modelStateOf(editor: ModelRestrictionEditor): ModelSnapshotValue
   return selected === undefined ? { models } : { models, defaultModel: { ...selected } }
 }
 
-function mergeProviderSettings(target: RegisteredProviderInfo, mirror: BuiltProviderMirror): void {
-  target.name = mirror.name
-  for (const [key, value] of Object.entries(mirror)) {
-    if (key === "id") continue
-    target[key] = value
-  }
+// Merging onto an existing host provider writes ONLY the fields the V1 entry
+// expresses: the host item already carries its own required package and
+// activation (its package routes the requests), and overwriting them with the
+// V1 defaults would cut every model of that provider off its route.
+function mergeProviderSettings(target: RegisteredProviderInfo, providerID: string, entry: unknown): void {
+  const record = asRecord(entry)
+  target.name = asString(record["name"]) ?? providerID
+  const npm = asString(record["npm"])
+  if (npm !== undefined) target.package = npm
+  const options = asRecord(record["options"])
+  if (Object.keys(options).length > 0) Object.assign(target, { settings: { ...options } })
+  const headers = asStringRecord(options["headers"])
+  if (headers !== undefined) target.headers = headers
 }
 
 export function applyProviderContributions(
@@ -64,24 +80,48 @@ export function applyProviderContributions(
 ): void {
   if (providerSection === undefined) return
   for (const [providerID, entry] of Object.entries(providerSection)) {
-    const models = modelEntriesOf(entry)
-      .filter(([modelID, modelEntry]) => {
-        if (isExpressibleModelEntry(modelEntry)) return true
-        reportUnsupported(providerID, modelID)
-        return false
-      })
-      .map(([modelID, modelEntry]) => buildModelMirror(providerID, modelID, modelEntry))
+    const built: Array<{
+      readonly modelID: string
+      readonly entry: unknown
+      readonly mirror: RegisteredModelInfo
+    }> = []
+    for (const [modelID, modelEntry] of modelEntriesOf(entry)) {
+      if (!isExpressibleModelEntry(modelEntry)) {
+        reportUnsupported(`${providerID}/${modelID}`)
+        continue
+      }
+      const mirror = buildModelMirror(providerID, modelID, modelEntry)
+      if (!isValidModelInfo(mirror)) {
+        reportUnsupported(`${providerID}/${modelID}`)
+        continue
+      }
+      built.push({ modelID, entry: modelEntry, mirror })
+    }
     const mirror = buildProviderMirror(providerID, entry)
-    const existing = editor.get(providerID)
-    if (existing === undefined) {
-      editor.add({ info: mirror, models })
+    if (!isValidProviderInfo(mirror)) {
+      reportUnsupported(providerID)
       continue
     }
-    editor.update(providerID, (provider) => mergeProviderSettings(provider, mirror))
-    if (models.length === 0) continue
-    const merged = new Map(existing.models)
-    for (const model of models) merged.set(model.id, model)
-    editor.models.set(providerID, [...merged.values()])
+    const existing = editor.get(providerID)
+    if (existing === undefined) {
+      editor.add({ info: mirror, models: built.map((model) => model.mirror) })
+      continue
+    }
+    editor.update(providerID, (provider) => mergeProviderSettings(provider, providerID, entry))
+    if (built.length === 0) continue
+    // Present host models keep their host-owned fields: the expressible V1
+    // fields are written onto them, and only model ids the host does not list
+    // yet receive the built complete mirror.
+    const appended: RegisteredModelInfo[] = []
+    for (const model of built) {
+      if (existing.models.has(model.modelID)) {
+        editor.models.update(providerID, model.modelID, (target) => writeModelMirrorFields(target, model.entry))
+      } else {
+        appended.push(model.mirror)
+      }
+    }
+    if (appended.length === 0) continue
+    editor.models.set(providerID, [...existing.models.values(), ...appended])
   }
 }
 
@@ -93,7 +133,7 @@ export function applyModelRestrictionsAndOverrides(
   for (const [providerID, entry] of Object.entries(plan?.provider ?? {})) {
     for (const [modelID, modelEntry] of modelEntriesOf(entry)) {
       if (!isExpressibleModelEntry(modelEntry)) {
-        reportUnsupported(providerID, modelID)
+        reportUnsupported(`${providerID}/${modelID}`)
         continue
       }
       if (editor.get(providerID, modelID) === undefined) continue

@@ -8,6 +8,10 @@
 // task-23 plan source (runtime.planSource.registerStep) so every recompute
 // re-applies the contributions; the plan source is the ONLY caller of the
 // domain reloads. Replay is idempotent: add when absent, update when present.
+// The editor mirrors are the REAL pinned SDK item types (MutableModelInfo /
+// MutableProviderInfo over @opencode/plugin): a hand-written optional-field
+// mirror cannot catch a missing required field at compile time, which is how
+// the incomplete Model.Info entries reached the host in the first place.
 
 import { log } from "../../shared"
 
@@ -19,34 +23,16 @@ import {
   type UnsupportedReporter,
 } from "./provider-model-apply"
 import type { HostStateSnapshot } from "./host-state-snapshot"
+import type { MutableModelInfo, MutableProviderInfo } from "./provider-model-info"
 import { guardReplayEditor } from "./replay-guard"
 import type { RegistrationPlan } from "./registration-plan"
 
 const LOG_MARKER = "[opencode-v2] provider-model"
 
-// Structural mirrors of the pinned node_modules/@opencode/plugin 2.4.1
-// editor surfaces (ProviderRecord / ProviderEditor / ModelEditor): plain
-// strings instead of the effect-branded schema types, so the real host ctx
-// and the fake ctx both satisfy them.
-export type RegisteredProviderInfo = {
-  readonly id: string
-  name: string
-  [key: string]: unknown
-}
-
-export type RegisteredModelInfo = {
-  readonly id: string
-  readonly modelID: string
-  readonly providerID: string
-  name: string
-  enabled?: boolean
-  limit?: { context: number; output: number }
-  capabilities?: { tools?: boolean; input?: string[]; output?: string[] }
-  temperature?: boolean
-  settings?: Record<string, unknown>
-  headers?: Record<string, string>
-  [key: string]: unknown
-}
+// The mutable item views the host editors hand to update callbacks (the
+// pinned 2.4.1 editors use Types.DeepMutable over the schema items).
+export type RegisteredProviderInfo = MutableProviderInfo
+export type RegisteredModelInfo = MutableModelInfo
 
 export type RegisteredProviderRecord = {
   provider: RegisteredProviderInfo
@@ -105,11 +91,10 @@ export async function registerProviderModelTransforms(
   options?: ProviderModelRegistrationOptions,
 ): Promise<readonly [ProviderModelPlanStep, ProviderModelPlanStep]> {
   const reported = new Set<string>()
-  const reportUnsupported: UnsupportedReporter = (providerID, modelID) => {
-    const entry = `${providerID}/${modelID}`
+  const reportUnsupported: UnsupportedReporter = (entry) => {
     if (reported.has(entry)) return
     reported.add(entry)
-    const message = `${LOG_MARKER}: V1 provider model entry ${entry} has no OpenCode 2 model schema counterpart; skipped`
+    const message = `${LOG_MARKER}: V1 provider entry ${entry} has no complete OpenCode 2 item counterpart; skipped`
     if (options?.onUnsupportedEntry === undefined) log(message, { entry })
     else options.onUnsupportedEntry(entry)
   }

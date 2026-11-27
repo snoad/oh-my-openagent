@@ -8,6 +8,8 @@ import {
   type ProviderModelPlanStep,
   type ProviderRegistrationEditor,
 } from "../registration/provider-model"
+import { buildModelMirror, buildProviderMirror } from "../registration/provider-model-contributions"
+import { modelIDBrand, providerIDBrand } from "../registration/provider-model-info"
 import { createPlanSource } from "../registration/plan-source"
 import { EMPTY_PLAN, type RegistrationPlan } from "../registration/registration-plan"
 import { createFakeV2Context, type FakeV2Context } from "./fake-v2-context"
@@ -78,8 +80,8 @@ async function checkProviderContributions(): Promise<void> {
     const gatewaySettings = gateway?.provider.settings as Record<string, unknown> | undefined
     expect(gatewaySettings?.["baseURL"]).toBe("https://apis.opengateway.ai/v1")
     const fable = gateway?.models.get("claude-fable-5")
-    expect(fable?.modelID).toBe("claude-fable-5")
-    expect(fable?.providerID).toBe("opengateway")
+    expect(fable?.modelID).toBe(modelIDBrand("claude-fable-5"))
+    expect(fable?.providerID).toBe(providerIDBrand("opengateway"))
     expect(fable?.name).toBe("Claude Fable 5")
     expect(fable?.limit).toEqual({ context: 1000000, output: 128000 })
     expect(fable?.capabilities).toEqual({ tools: true, input: ["text", "image"], output: ["text"] })
@@ -102,11 +104,11 @@ async function checkModelRestrictions(): Promise<void> {
   )
   await ctx.provider.transform((editor) => {
     editor.add({
-      info: { id: "anthropic", name: "anthropic" },
+      info: buildProviderMirror("anthropic", {}),
       models: [
-        { id: "claude-fable-5", modelID: "claude-fable-5", providerID: "anthropic", name: "claude-fable-5" },
-        { id: "claude-haiku-4-5", modelID: "claude-haiku-4-5", providerID: "anthropic", name: "claude-haiku-4-5" },
-        { id: "claude-sonnet-5", modelID: "claude-sonnet-5", providerID: "anthropic", name: "claude-sonnet-5" },
+        buildModelMirror("anthropic", "claude-fable-5", {}),
+        buildModelMirror("anthropic", "claude-haiku-4-5", {}),
+        buildModelMirror("anthropic", "claude-sonnet-5", {}),
       ],
     })
   })

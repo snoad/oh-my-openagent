@@ -11,16 +11,18 @@ import {
 } from "./fake-v2-editors"
 import { createModelEditor, type FakeModelDomain, type FakeModelEditor } from "./fake-v2-model-domain"
 import type { FakeHookRegistry, FakeRegistration } from "./fake-v2-registry"
+import type { RegisteredModelInfo, RegisteredProviderInfo } from "../registration/provider-model"
 
 // Provider editor domain for the fake OpenCode 2 plugin context, task 9 of
-// the opencode-v2-compat plan. Local structural mirror of the pinned
-// node_modules/@opencode/plugin 2.4.1 ProviderRecord / ProviderEditor: the
-// provider editor owns the provider records with their model maps. The model
-// editor domain lives in fake-v2-model-domain.ts and shares the stores.
+// the opencode-v2-compat plan. The fake carries the REAL pinned registration
+// item types (MutableProviderInfo / MutableModelInfo over @opencode/plugin
+// 2.4.1): a fake whose item types make every field optional proves nothing
+// about entry completeness, which is how the missing Model.Info time field
+// slipped through to the host (task 28 repair).
 
-export type FakeProviderInfo = { id: string; name: string; [key: string]: unknown }
+export type FakeProviderInfo = RegisteredProviderInfo
 
-export type FakeModelInfo = { id: string; modelID: string; providerID: string; name: string; [key: string]: unknown }
+export type FakeModelInfo = RegisteredModelInfo
 
 export type FakeProviderRecord = {
   provider: FakeProviderInfo

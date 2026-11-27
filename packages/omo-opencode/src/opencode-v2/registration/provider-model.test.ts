@@ -10,6 +10,7 @@ import {
   type ProviderModelPlanStep,
   type ProviderRegistrationEditor,
 } from "./provider-model"
+import { buildModelMirror, buildProviderMirror } from "./provider-model-contributions"
 import { EMPTY_PLAN, type RegistrationPlan } from "./registration-plan"
 import type { V1WorkingConfig } from "./v1-config-projection"
 
@@ -175,11 +176,11 @@ describe("registerProviderModelTransforms", () => {
     )
     await ctx.provider.transform((editor) => {
       editor.add({
-        info: { id: "anthropic", name: "anthropic" },
+        info: buildProviderMirror("anthropic", {}),
         models: [
-          { id: "claude-fable-5", modelID: "claude-fable-5", providerID: "anthropic", name: "claude-fable-5" },
-          { id: "claude-haiku-4-5", modelID: "claude-haiku-4-5", providerID: "anthropic", name: "claude-haiku-4-5" },
-          { id: "claude-sonnet-5", modelID: "claude-sonnet-5", providerID: "anthropic", name: "claude-sonnet-5" },
+          buildModelMirror("anthropic", "claude-fable-5", {}),
+          buildModelMirror("anthropic", "claude-haiku-4-5", {}),
+          buildModelMirror("anthropic", "claude-sonnet-5", {}),
         ],
       })
     })
@@ -272,6 +273,38 @@ describe("registerProviderModelTransforms", () => {
     expect(reloadCount()).toBe(1)
     expect(ctx.__calls.filter((call) => call.op === "provider.list").length).toBe(1)
     await source.subscription.stop()
+  })
+
+  it("#given a model entry whose derived item misses a required Model.Info field #when the provider step runs #then the entry is skipped and reported once and the host never sees it", async () => {
+    // given: a fractional limit derives limit.context outside the pinned
+    // integer schema (the completeness guard rejects it before the handover)
+    const ctx = createFakeV2Context()
+    const snapshot = createHostStateSnapshot(ctx)
+    const plan = planWithProvider({
+      opengateway: {
+        name: "OpenGateway",
+        models: {
+          broken: { name: "Broken", limit: { context: 1048.5, output: 100 } },
+          complete: { name: "Complete", limit: { context: 1000, output: 100 } },
+        },
+      },
+    })
+    const reported: string[] = []
+    const steps = await registerProviderModelTransforms(asRegistrationContext(ctx), () => plan, snapshot, {
+      onUnsupportedEntry: (entry) => reported.push(entry),
+    })
+
+    // when
+    await steps[0]?.run({ plan })
+
+    // then
+    expect(reported).toEqual(["opengateway/broken"])
+    await providerView(ctx, (editor) => {
+      expect(editor.get("opengateway")?.models.has("broken")).toBe(false)
+      expect(editor.get("opengateway")?.models.has("complete")).toBe(true)
+    })
+    await steps[0]?.run({ plan })
+    expect(reported).toEqual(["opengateway/broken"])
   })
 
   it("#given steps without a plan #when the transforms run #then nothing is applied and the pristine state is still recorded", async () => {
