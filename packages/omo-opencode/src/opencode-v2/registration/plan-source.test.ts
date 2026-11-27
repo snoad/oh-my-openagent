@@ -15,10 +15,17 @@ async function flushAsync(): Promise<void> {
 
 function createManualScheduler() {
   const pending = new Set<{ run: () => void }>()
+  const state: { autoFire: boolean } = { autoFire: false }
   return {
     setTimeout: (callback: () => void, ms: number) => {
       const timer = { run: callback }
       pending.add(timer)
+      if (state.autoFire) {
+        queueMicrotask(() => {
+          if (!pending.delete(timer)) return
+          callback()
+        })
+      }
       return () => {
         pending.delete(timer)
       }
@@ -29,6 +36,7 @@ function createManualScheduler() {
       for (const timer of timers) timer.run()
     },
     pendingCount: () => pending.size,
+    state,
   }
 }
 
@@ -249,6 +257,105 @@ describe("createPlanSource", () => {
     // then
     expect(source.getPlan()).toBeUndefined()
     expect(callOps(ctx, "agent.reload")).toBe(0)
+    await source.subscription.stop()
+  })
+
+  it("#given a registration that lands mid-chain state the plan reads #when the runtime's active point drains via settle #then the settled plan is the one the first session observes and no debounce stays armed", async () => {
+    // given: the pipeline mirrors the real V1 handler's dependence on host
+    // state the registration steps land later: the late agent exists in the
+    // plan only once the snapshot carries the late tool.
+    const ctx = createFakeV2Context()
+    const scheduler = createManualScheduler()
+    const lateEngine = {
+      config: async (config: V1WorkingConfig) => {
+        config.agent["omo-sentinel"] = { name: "omo-sentinel", prompt: "sentinel prompt", mode: "primary" }
+        if (config.tools["race-late-tool"] === true) {
+          config.agent["race-late-agent"] = { name: "race-late-agent", prompt: "late", mode: "subagent" }
+        }
+      },
+    }
+    const source = await createPlanSource(ctx, lateEngine, { scheduler })
+
+    // when: the runtime adapter order registers the tool step and recomputes;
+    // the step's registration lands the tool on the host editor mid-recompute
+    // (the snapshot refreshed before the step ran, the runtime's own order)
+    source.registerStep({
+      id: "race-tool",
+      domain: "tool",
+      run: async () => {
+        await ctx.tool.transform((editor) => {
+          editor.add({
+            id: "race-late-tool",
+            name: "race-late-tool",
+            description: "lands after the refresh",
+            input: { type: "object", properties: {} },
+            execute: async () => ({ content: "ok" }),
+          })
+        })
+      },
+    })
+    await source.recompute()
+
+    // and when: the reload chain publishes the domain event exactly as the
+    // real host's agent reload does, arming a debounce that outlives the
+    // adapter chain
+    ctx.__pushEvent({ type: "agent.updated", created: 1, data: {} })
+    await flushAsync()
+
+    // then: the old active point reports the plugin with the plan NOT yet
+    // settled (RED on the code without the drain: the first session reads it)
+    expect(scheduler.pendingCount()).toBe(1)
+    expect(source.getPlan()?.agents.added["race-late-agent"]).toBeUndefined()
+
+    // when: the armed window elapses (the runtime's own debounce), then the
+    // runtime drains to the fixed point before reporting active
+    await scheduler.fire()
+    await source.settle()
+
+    // then: the armed chain drained, the late plan section landed and nothing
+    // stays armed behind the plugin's active report
+    expect(source.getPlan()?.agents.added["race-late-agent"]).toBeDefined()
+    expect(scheduler.pendingCount()).toBe(0)
+    await source.subscription.stop()
+  })
+
+  it("#given an idle plan source with no armed debounce #when settle runs #then it resolves immediately without recomputing or scheduling anything", async () => {
+    // given
+    const ctx = createFakeV2Context()
+    const scheduler = createManualScheduler()
+    const source = await createPlanSource(ctx, sentinelEngine(), { scheduler })
+    expect(scheduler.pendingCount()).toBe(0)
+    const planBeforeSettle = source.getPlan()
+
+    // when
+    await source.settle()
+
+    // then: no injected recompute touched the plan, nothing stays scheduled
+    expect(scheduler.pendingCount()).toBe(0)
+    expect(source.getPlan()).toBe(planBeforeSettle)
+    await source.subscription.stop()
+  })
+
+  it("#given an event storm that keeps re-arming the debounce #when settle hits the round cap #then it returns the drained-prefix state instead of hanging", async () => {
+    // given: every fired window sees a fresh event (auto-fire resolves each
+    // armed window as soon as it is scheduled, the storm re-arms immediately)
+    const ctx = createFakeV2Context()
+    const scheduler = createManualScheduler()
+    scheduler.state.autoFire = true
+    const source = await createPlanSource(ctx, sentinelEngine(), { scheduler, settleMaxRounds: 2 })
+
+    // when
+    ctx.__pushEvent({ type: "agent.updated", created: 1, data: {} })
+    await flushAsync()
+    const draining = source.settle()
+    for (let round = 0; round < 8; round += 1) {
+      ctx.__pushEvent({ type: "agent.updated", created: round, data: {} })
+      await flushAsync()
+    }
+    await draining
+
+    // then: settle returned under the storm (bounded), the plan is applied
+    expect(source.getPlan()).toBeDefined()
     await source.subscription.stop()
   })
 })

@@ -108,5 +108,12 @@ export async function startV2Runtime(ctx: V2RuntimePluginContext, deps: V2Runtim
   for (const registration of v2AdapterRegistrations) {
     await registration.register({ ctx, runtime })
   }
+  // The plugin reports active only after the plan source drained its startup
+  // recompute chain to a fixed point: the reloads the chain fired publish
+  // *.updated events whose debounced recomputes otherwise land after setup
+  // returned, and the first admitted session then reads a mid-settlement
+  // plan (CI run 46070504361: the first session's request missed the patch
+  // and task tools until a later recompute settled the chain).
+  if (runtime.planSource !== undefined) await runtime.planSource.settle()
   return runtime
 }

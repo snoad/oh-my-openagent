@@ -11,12 +11,14 @@
 import { log } from "../../shared"
 
 import { subscribeV2RawEvents, type V2EventSubscription } from "../events/subscribe-v2-events"
-import { jsonDeepEqual, noopPlanOf } from "./plan-diff"
+import { armDebounceWindow, defaultPlanScheduler, drainArmedWindows, type ArmedDebounce } from "./plan-source-debounce"
+import { changedPlanDomains, noopPlanOf } from "./plan-diff"
 import { createPlanStepRegistry, type PlanStepDomain, type PlanStepRegistry } from "./plan-steps"
 import type { PlanSourceContext, PlanSourceEngine, PlanSourceScheduler } from "./plan-source-context"
 import { computeRegistrationPlan } from "./project-config"
 import { type PlanDomain, type RegistrationPlan } from "./registration-plan"
 import { guardReplayStep } from "./replay-guard"
+import { permissionRulesOfV1Agent } from "./permissions"
 import { createHostStateSnapshot, type HostStateSnapshot } from "./host-state-snapshot"
 
 // Verified against the pinned @opencode/schema 2.4.1 (the host's own event
@@ -34,6 +36,11 @@ export const PLAN_SOURCE_EVENT_TYPES = [
 
 export const DEFAULT_PLAN_DEBOUNCE_MS = 500
 
+// The settle round cap: startup event chains observed on the live host
+// converge within a handful of debounced recomputes; 16 leaves headroom
+// without unbounding the drain against a reconnect storm.
+const DEFAULT_SETTLE_MAX_ROUNDS = 16
+
 const LOG_MARKER = "[opencode-v2] plan-source"
 
 export type PlanSource = {
@@ -41,6 +48,7 @@ export type PlanSource = {
   readonly snapshot: HostStateSnapshot
   readonly registerStep: PlanStepRegistry["register"]
   readonly recompute: () => Promise<void>
+  readonly settle: () => Promise<void>
   readonly idle: () => Promise<void>
   readonly subscription: V2EventSubscription
 }
@@ -50,13 +58,7 @@ export type CreatePlanSourceOptions = {
   readonly scheduler?: PlanSourceScheduler
   readonly debounceMs?: number
   readonly signal?: AbortSignal
-}
-
-const defaultScheduler: PlanSourceScheduler = {
-  setTimeout: (callback, ms) => {
-    const handle = setTimeout(callback, ms)
-    return () => clearTimeout(handle)
-  },
+  readonly settleMaxRounds?: number
 }
 
 const domainReloaders: Record<PlanDomain, (ctx: PlanSourceContext) => Promise<void>> = {
@@ -86,19 +88,6 @@ const STEP_DOMAIN_RELOAD_TARGETS: Record<PlanStepDomain, readonly PlanDomain[]> 
   model: ["model"],
 }
 
-function changedDomains(previous: RegistrationPlan, next: RegistrationPlan): readonly PlanDomain[] {
-  const changed: PlanDomain[] = []
-  if (!jsonDeepEqual(previous.agents, next.agents) || !jsonDeepEqual(previous.defaultAgent, next.defaultAgent)) {
-    changed.push("agents")
-  }
-  if (!jsonDeepEqual(previous.tools, next.tools)) changed.push("tools")
-  if (!jsonDeepEqual(previous.mcp, next.mcp)) changed.push("mcp")
-  if (!jsonDeepEqual(previous.commands, next.commands)) changed.push("commands")
-  if (!jsonDeepEqual(previous.provider, next.provider)) changed.push("provider")
-  if (!jsonDeepEqual(previous.model, next.model)) changed.push("model")
-  return changed
-}
-
 export async function createPlanSource(
   ctx: PlanSourceContext,
   engine: PlanSourceEngine,
@@ -106,11 +95,12 @@ export async function createPlanSource(
 ): Promise<PlanSource> {
   const snapshot = options.snapshot ?? createHostStateSnapshot(ctx)
   const steps = createPlanStepRegistry()
-  const scheduler = options.scheduler ?? defaultScheduler
+  const scheduler = options.scheduler ?? defaultPlanScheduler
   const debounceMs = options.debounceMs ?? DEFAULT_PLAN_DEBOUNCE_MS
+  const settleMaxRounds = options.settleMaxRounds ?? DEFAULT_SETTLE_MAX_ROUNDS
   let lastApplied: RegistrationPlan | undefined
   let currentPlan: RegistrationPlan | undefined
-  let cancelDebounce: (() => void) | undefined
+  let armed: ArmedDebounce | undefined
   let queueTail: Promise<void> = Promise.resolve()
   const pendingReloads = new Set<PlanDomain>()
 
@@ -131,7 +121,7 @@ export async function createPlanSource(
     }
     if (currentPlan === undefined) return
     const baseline = lastApplied ?? noopPlanOf(base)
-    const changed = changedDomains(baseline, currentPlan)
+    const changed = changedPlanDomains(baseline, currentPlan)
     if (changed.length === 0 && pendingReloads.size === 0) {
       lastApplied = currentPlan
       return
@@ -160,12 +150,19 @@ export async function createPlanSource(
   }
 
   const scheduleRecompute = (): void => {
-    cancelDebounce?.()
-    cancelDebounce = scheduler.setTimeout(() => {
-      cancelDebounce = undefined
+    armed?.cancel()
+    armed = armDebounceWindow(scheduler, debounceMs, () => {
+      armed = undefined
       enqueueAndForget(recomputeNow)
-    }, debounceMs)
+    })
   }
+
+  const settle = (): Promise<void> =>
+    drainArmedWindows(
+      () => armed,
+      () => queueTail,
+      settleMaxRounds,
+    )
 
   const listener = {
     types: [...PLAN_SOURCE_EVENT_TYPES],
@@ -183,6 +180,7 @@ export async function createPlanSource(
       for (const domain of STEP_DOMAIN_RELOAD_TARGETS[step.domain]) pendingReloads.add(domain)
     },
     recompute: () => enqueue(recomputeNow),
+    settle,
     idle: () => queueTail,
     subscription,
   }

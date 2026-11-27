@@ -9,6 +9,7 @@ import type {
   PlanSection,
   PlanServerConfig,
   RegistrationPlan,
+  PlanDomain,
 } from "./registration-plan"
 
 export function jsonDeepEqual(left: unknown, right: unknown): boolean {
@@ -119,4 +120,20 @@ function withV1AgentNames(
     modified[key] = { ...value, name: id, name_only: true }
   }
   return { added, modified, removed: section.removed }
+}
+
+// The plan domains a recompute must reload: every section the next plan moved
+// away from the comparison plan (the agents section counts the default agent
+// as part of the same domain).
+export function changedPlanDomains(previous: RegistrationPlan, next: RegistrationPlan): readonly PlanDomain[] {
+  const changed: PlanDomain[] = []
+  if (!jsonDeepEqual(previous.agents, next.agents) || !jsonDeepEqual(previous.defaultAgent, next.defaultAgent)) {
+    changed.push("agents")
+  }
+  if (!jsonDeepEqual(previous.tools, next.tools)) changed.push("tools")
+  if (!jsonDeepEqual(previous.mcp, next.mcp)) changed.push("mcp")
+  if (!jsonDeepEqual(previous.commands, next.commands)) changed.push("commands")
+  if (!jsonDeepEqual(previous.provider, next.provider)) changed.push("provider")
+  if (!jsonDeepEqual(previous.model, next.model)) changed.push("model")
+  return changed
 }
