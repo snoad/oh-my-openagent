@@ -44,8 +44,14 @@ async function checkConfigGet(): Promise<void> {
   expect(callOps(ctx, "tool.list")).toBe(1)
   expect(second.data).toEqual(first.data)
   expect(Object.keys(first.data?.agent ?? {}).length).toBeGreaterThan(0)
-  expect(Object.values(first.data?.tools ?? {}).every((enabled) => enabled === true)).toBe(true)
-  expect(first.data?.permission).toEqual({})
+  // Task 22 moved config.get onto the host-state snapshot: the fixture's
+  // subagent deny disables V1 task while the shell allow keeps bash enabled.
+  const tools = first.data?.tools ?? {}
+  const permission = first.data?.permission ?? {}
+  expect(tools["task"]).toBe(false)
+  expect(tools["bash"]).toBe(true)
+  expect(permission["bash"]).toBe("allow")
+  expect(Object.entries(permission)).toContainEqual(["task", "deny"])
 }
 
 export const hClientMiscRows: ParityRow[] = defineGroup("H-CLIENT", [
@@ -54,7 +60,7 @@ export const hClientMiscRows: ParityRow[] = defineGroup("H-CLIENT", [
   row("PROVIDER-LIST", "provider.list maps ctx.provider.list onto the V1 provider envelope", checkProviderList),
   row(
     "CONFIG-GET",
-    "config.get caches the V1-shaped projection built from ctx.agent.list and ctx.tool.list",
+    "config.get caches the V1-shaped projection served by the host-state snapshot (plan task 22)",
     checkConfigGet,
   ),
 ])
