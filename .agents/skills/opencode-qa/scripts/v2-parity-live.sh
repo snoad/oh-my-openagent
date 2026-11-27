@@ -21,6 +21,9 @@
 # real opencode.db during the run are recorded as ambient and never fail a
 # row; a real leak (a session row whose directory lies inside the sandbox, a
 # sandbox directory left behind, or a changed system opencode --version) FAILs.
+# When no system opencode is installed at all (CI runners), the manifest
+# records systemOpencode "absent" with null versions and the version clause
+# is not applicable; every leak-based clause still applies.
 #
 # System dependencies: bash, bun + node (build + runner), curl, jq, sqlite3,
 # git, tmux, plus the OC2 binary bootstrapped by v2-bootstrap.sh. The CI job
@@ -382,9 +385,12 @@ oqa_pl_main() {
   fi
   [ -f "$REPO_ROOT/dist/index.js" ] || { oqa_pl_fail "dist/index.js missing (run without --no-build)"; return 1; }
 
-  local sys_cmd sys_ver_before sys_ver_after db_before db_after
+  local sys_cmd="" sys_ver_before="" sys_ver_after="" sys_opencode="absent"
   sys_cmd="$(command -v opencode)"
-  sys_ver_before="$("$sys_cmd" --version 2>/dev/null | tail -1)"
+  if [ -n "$sys_cmd" ]; then
+    sys_opencode="present"
+    sys_ver_before="$("$sys_cmd" --version 2>/dev/null | tail -1)"
+  fi
   db_before="$(oqa_v2_real_db_digest)"
 
   WORK_DIR="$(mktemp -d -t oqa-v2-parity.XXXXXX)"
@@ -523,7 +529,7 @@ JSON
   # ---- shutdown, post-shutdown log copies, teardown, post phase ----
   oqa_v2_serve_stop
   sleep 1
-  sys_ver_after="$("$sys_cmd" --version 2>/dev/null | tail -1)"
+  if [ -n "$sys_cmd" ]; then sys_ver_after="$("$sys_cmd" --version 2>/dev/null | tail -1)"; fi
   db_after="$(oqa_v2_real_db_digest)"
   # The stats lines exist only after the server stopped: refresh the evidence
   # copies NOW so the post phase evaluates the cleanup-dependent assertions.
@@ -534,6 +540,17 @@ JSON
   local sandbox_path="$OQA_V2_SANDBOX"
   oqa_v2_rm_sandbox
   oqa_pl_restore_real_env
+
+  # JSON tokens for the version clause: null when no system opencode exists
+  # on this runner (CI), quoted strings exactly as before otherwise.
+  local sys_ver_before_json sys_ver_after_json
+  if [ -n "$sys_cmd" ]; then
+    sys_ver_before_json="\"$sys_ver_before\""
+    sys_ver_after_json="\"$sys_ver_after\""
+  else
+    sys_ver_before_json=null
+    sys_ver_after_json=null
+  fi
 
   oqa_pl_dump_db_sessions "$WORK_DIR/db-after.txt"
   oqa_pl_analyze_db_sessions "$sandbox_path"
@@ -568,8 +585,9 @@ JSON
   "sandboxOmoConfig": "$omo_cfg",
   "sandboxPath": "$sandbox_path",
   "isolation": {
-    "systemVersionBefore": "$sys_ver_before",
-    "systemVersionAfter": "$sys_ver_after",
+    "systemOpencode": "$sys_opencode",
+    "systemVersionBefore": $sys_ver_before_json,
+    "systemVersionAfter": $sys_ver_after_json,
     "dbDigestBefore": "$db_before",
     "dbDigestAfter": "$db_after",
     "sessionCountBefore": $count_before,

@@ -23,8 +23,11 @@ export type LiveLocation = {
 }
 
 export type LiveIsolationReceipt = {
-  readonly systemVersionBefore?: string
-  readonly systemVersionAfter?: string
+  // "absent" means the runner has no system opencode at all (CI); the version
+  // clause is then not applicable and both version fields are null.
+  readonly systemOpencode?: "present" | "absent"
+  readonly systemVersionBefore?: string | null
+  readonly systemVersionAfter?: string | null
   readonly dbDigestBefore?: string
   readonly dbDigestAfter?: string
   readonly sessionCountBefore?: number

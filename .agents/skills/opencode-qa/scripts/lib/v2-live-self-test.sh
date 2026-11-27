@@ -12,11 +12,14 @@
 # present in serve.out. Coverage:
 #   good live run    L-01/L-02/L-07/L-09/L-11/L-20/L-21/L-22/L-24 PASS,
 #                    L-08 PARTIAL (sisyphus line deferred), L-15/L-18 pending
-#   good post run    L-15 PASS (ambient sessions tolerated), L-11 PASS
+#   good post run    L-15 PASS (ambient sessions tolerated; absent system
+#                    opencode = version clause not applicable), L-11 PASS
 #                    (stats line, translated > 0), L-24 PASS (bound holds)
 #   broken runs      one targeted mutation per FAIL case (see the case list
-#                    in main) plus the L-08 full-strength PASS case and the
-#                    L-22 process-wide STOP verdict
+#                    in main) plus the L-08 full-strength PASS case, the
+#                    L-15 absent-opencode PASS case (with its evidence line)
+#                    and the L-15 version-changed FAIL case, and the L-22
+#                    process-wide STOP verdict
 #   driver tests     truthful final line, --strict gate, L-18 verdict
 #                    write-back, bun/ junk guard, reload-for-stats trigger
 #                    (step 1, step 2, never) (driver sourced in import mode;
@@ -386,6 +389,34 @@ main() {
   start_stub "$dir" || { oqa_st_fail "L-15 leak: stub did not start"; return 1; }
   run_runner "$dir" "$dir/post-manifest.json" "$dir/out" "--post" || true
   expect_row "$dir/out/results.json" "L-15" "false" "L-15 real leak row"
+
+  # 4b. L-15 absent-opencode post phase: no system opencode on the runner,
+  # version clause not applicable, leak clauses unchanged -> PASS with the
+  # truthful evidence line.
+  dir="$TMP/case-L-15-absent"
+  cp -r "$good" "$dir"; rm -rf "$dir/out-live" "$dir/out"
+  rebase_case "$dir" "$good" "$dir"
+  jq '.isolation.systemOpencode = "absent" | .isolation.systemVersionBefore = null | .isolation.systemVersionAfter = null' \
+    "$dir/post-manifest.json" > "$dir/pm.tmp" && mv "$dir/pm.tmp" "$dir/post-manifest.json"
+  start_stub "$dir" || { oqa_st_fail "L-15 absent: stub did not start"; return 1; }
+  run_runner "$dir" "$dir/post-manifest.json" "$dir/out" "--post" || true
+  expect_row "$dir/out/results.json" "L-15" "true" "L-15 absent system opencode"
+  if grep -qF 'system opencode: absent on this runner (version clause not applicable)' "$dir/out/L-15.txt" 2>/dev/null; then
+    oqa_st_pass "L-15 absent: evidence states the version clause is not applicable"
+  else
+    oqa_st_fail "L-15 absent: evidence line missing from $dir/out/L-15.txt"
+  fi
+
+  # 4c. L-15 version-changed post phase: system opencode present with
+  # unequal versions must still FAIL (the present-path branch is untouched).
+  dir="$TMP/case-L-15-version-changed"
+  cp -r "$good" "$dir"; rm -rf "$dir/out-live" "$dir/out"
+  rebase_case "$dir" "$good" "$dir"
+  jq '.isolation.systemOpencode = "present" | .isolation.systemVersionAfter = "2.4.1"' \
+    "$dir/post-manifest.json" > "$dir/pm.tmp" && mv "$dir/pm.tmp" "$dir/post-manifest.json"
+  start_stub "$dir" || { oqa_st_fail "L-15 version-changed: stub did not start"; return 1; }
+  run_runner "$dir" "$dir/post-manifest.json" "$dir/out" "--post" || true
+  expect_row "$dir/out/results.json" "L-15" "false" "L-15 version changed"
 
   # 5. L-22 process-wide stream: STOP verdict
   dir="$TMP/case-L-22-stop"
