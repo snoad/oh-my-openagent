@@ -6,13 +6,15 @@
 // row id against the sandbox API, the fake model request log and the
 // sandboxed plugin logs, writes one evidence file per row and a results.json
 // summary. Every live row of the matrix appears in the summary: rows whose
-// owning task has not landed report pending. --post runs the teardown checks
-// (L-15) after the driver stopped the server and removed the sandbox.
+// owning task has not landed report pending. --post re-evaluates L-15 plus
+// the cleanup-stats rows L-11 and L-24 against the post-shutdown log copies
+// and merges those verdicts into results.json. --strict exits non-zero when
+// any selected row is partial, stop or pending.
 //
 // Usage (driven by .agents/skills/opencode-qa/scripts/v2-parity-live.sh):
 //   bun live-runner.ts --wave 2 --api http://127.0.0.1:PORT --password PASS \
 //     --plugin-log serve.out --host-log opencode.log --manifest runs.json \
-//     --out <evidence-dir> [--post]
+//     --out <evidence-dir> [--post] [--strict]
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { PARITY_ROWS } from "./rows"
@@ -25,7 +27,15 @@ import {
 } from "./live-check-context"
 import { liveRowShouldExecute, resolveLiveCheck } from "./live-checks-registry"
 
-type RowResult = { row: string; pass: true | false | "pending" | "stop"; evidence: string; summary: string }
+export type RowPass = true | false | "partial" | "pending" | "stop"
+export type RowResult = { row: string; wave: number; pass: RowPass; owner?: string; evidence: string; summary: string }
+
+// Rows re-evaluated in the post phase against the post-shutdown log copies.
+const POST_PHASE_ROWS = new Set(["L-15", "L-11", "L-24"])
+
+function verdictLabel(pass: RowPass): string {
+  return pass === true ? "PASS" : pass === false ? "FAIL" : String(pass).toUpperCase()
+}
 
 function parseArgs(argv: string[]): Map<string, string> {
   const args = new Map<string, string>()
@@ -52,17 +62,23 @@ function printUsageAndExit(code: number): never {
   process.stderr.write(
     [
       "usage: bun live-runner.ts --wave <n> --api <url> --password <pass> --plugin-log <file>",
-      "       --host-log <file> --manifest <file> --out <dir> [--post]",
+      "       --host-log <file> --manifest <file> --out <dir> [--post] [--strict]",
       "",
     ].join("\n"),
   )
   process.exit(code)
 }
 
-function toResult(rowId: string, outcome: LiveCheckOutcome, evidencePath: string): RowResult {
-  const pass =
-    outcome.pass === "stop" ? "stop" : outcome.pass === true ? true : outcome.pass === "pending" ? "pending" : false
-  return { row: rowId, pass, evidence: evidencePath, summary: outcome.summary }
+function toResult(rowId: string, wave: number, outcome: LiveCheckOutcome, evidencePath: string): RowResult {
+  const owner = typeof outcome.owner === "string" ? outcome.owner : undefined
+  return {
+    row: rowId,
+    wave,
+    pass: outcome.pass,
+    ...(owner === undefined ? {} : { owner }),
+    evidence: evidencePath,
+    summary: outcome.summary,
+  }
 }
 
 function mergedRowResults(existing: RowResult[], updates: RowResult[]): RowResult[] {
@@ -71,15 +87,18 @@ function mergedRowResults(existing: RowResult[], updates: RowResult[]): RowResul
   return [...byRow.values()].sort((left, right) => (left.row < right.row ? -1 : left.row > right.row ? 1 : 0))
 }
 
-function exitCodeOf(results: RowResult[]): number {
-  return results.some((result) => result.pass === false) ? 1 : 0
+function exitCodeOf(results: RowResult[], strict: boolean, wave: number): number {
+  if (results.some((result) => result.pass === false)) return 1
+  if (!strict) return 0
+  const open = results.filter((result) => result.wave <= wave && result.pass !== true && result.pass !== false)
+  return open.length > 0 ? 1 : 0
 }
 
 async function runChecks(ctx: LiveCheckContext, post: boolean): Promise<RowResult[]> {
   const results: RowResult[] = []
   for (const row of PARITY_ROWS) {
     if (row.kind !== "live") continue
-    if (post && row.id !== "L-15") continue
+    if (post && !POST_PHASE_ROWS.has(row.id)) continue
     let outcome: LiveCheckOutcome
     if (!post && row.id === "L-15") {
       outcome = {
@@ -98,14 +117,12 @@ async function runChecks(ctx: LiveCheckContext, post: boolean): Promise<RowResul
           evidence: `${row.id} FAIL: check threw: ${detail}\n`,
         }
       }
-      const verdict =
-        outcome.pass === true ? "PASS" : outcome.pass === false ? "FAIL" : String(outcome.pass).toUpperCase()
-      process.stdout.write(`${verdict} ${row.id}: ${outcome.summary}\n`)
+      process.stdout.write(`${verdictLabel(outcome.pass)} ${row.id}: ${outcome.summary}\n`)
     } else {
       outcome = await resolveLiveCheck(row, ctx.wave)(ctx)
     }
     const evidencePath = writeEvidenceFile(ctx, row.id, outcome.evidence)
-    results.push(toResult(row.id, outcome, evidencePath))
+    results.push(toResult(row.id, row.wave, outcome, evidencePath))
   }
   return results
 }
@@ -120,6 +137,7 @@ async function main(): Promise<void> {
   const manifestPath = args.get("manifest") ?? ""
   const outDir = args.get("out") ?? ""
   const post = args.get("post") === "true"
+  const strict = args.get("strict") === "true"
   if (apiBase === "" || manifestPath === "" || outDir === "" || pluginLog === "" || hostLog === "") {
     printUsageAndExit(2)
   }
@@ -137,6 +155,7 @@ async function main(): Promise<void> {
     hostLogPath: hostLog,
     outDir,
     wave,
+    phase: post ? "post" : "live",
     pluginState: { active: true, waitedMs: 0, entryText: "" },
   }
   let results: RowResult[] = []
@@ -156,7 +175,7 @@ async function main(): Promise<void> {
     results = updates
   }
   writeFileSync(resultsPath, JSON.stringify(results, null, 2) + "\n")
-  const failed = exitCodeOf(results)
+  const failed = exitCodeOf(results, strict, wave)
   process.stdout.write(`live-runner: ${results.length} live rows reported to ${resultsPath}\n`)
   process.exit(failed)
 }

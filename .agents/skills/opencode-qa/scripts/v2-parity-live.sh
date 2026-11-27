@@ -6,13 +6,31 @@
 # plugin equal to the repo root, start the scenario fake model and the
 # sandboxed server, drive scenarios A (plain text), B (read tool), C (shell
 # cat) plus a second-location session and a minimal TUI smoke, run the live
-# runner (V2/parity/live-runner.ts) against the live surfaces, tear the
-# sandbox down, run the post phase (L-15), then run v2-v1-regression.sh
-# (L-18) unless --skip-v1. Prints the result table and exits 0 only when
-# every selected row passed.
+# runner (V2/parity/live-runner.ts) against the live surfaces, stop the
+# server, copy serve.out and the plugin file log AFTER shutdown (the
+# translator stats lines exist only after cleanup), run the post phase
+# (L-15 plus the cleanup-stats halves of L-11 and L-24), then run
+# v2-v1-regression.sh (L-18) unless --skip-v1 and write its verdict into
+# results.json. Prints the result table; the final line never claims "every
+# executed live row passed" while a partial, stop or pending row of wave <= N
+# exists (every open row is named with its owner). Exit 0 when no row FAILED
+# and the strict gate is satisfied.
+#
+# Isolation is leak-based: unrelated sessions other processes create in the
+# real opencode.db during the run are recorded as ambient and never fail a
+# row; a real leak (a session row whose directory lies inside the sandbox, a
+# sandbox directory left behind, or a changed system opencode --version) FAILs.
+#
+# System dependencies: bash, bun + node (build + runner), curl, jq, sqlite3,
+# git, tmux, plus the OC2 binary bootstrapped by v2-bootstrap.sh. The CI job
+# of plan task 21 installs only tmux and jq on ubuntu-latest; curl, git,
+# sqlite3 and node are preinstalled there and bun comes from the setup action.
 #
 # Usage:
-#   v2-parity-live.sh --wave <n> [--ci] [--skip-v1] [--self-test] [--no-build]
+#   v2-parity-live.sh --wave <n> [--ci] [--strict] [--skip-v1] [--self-test] [--no-build]
+#   --strict: exit non-zero when any selected row (wave <= N) is partial,
+#             stop or pending (later wave gates use it; the wave-2 gate does
+#             not).
 #
 # Env:
 #   OQA_V2_PLUGIN_DIR   plugin dir under test (default: the repo root; the
@@ -29,6 +47,7 @@ RUNNER="$REPO_ROOT/packages/omo-opencode/src/opencode-v2/parity/live-runner.ts"
 
 WAVE=""
 CI=0
+STRICT=0
 SKIP_V1=0
 SELF_TEST=0
 NO_BUILD=0
@@ -39,27 +58,144 @@ oqa_pl_pass() { printf 'PASS: %s\n' "$*"; }
 oqa_pl_fail() { printf 'FAIL: %s\n' "$*" >&2; FAILS=$((FAILS + 1)); return 1; }
 FAILS=0
 
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --wave) [ $# -ge 2 ] || { printf 'error: --wave requires a number\n' >&2; exit 2; }; WAVE="$2"; shift 2 ;;
-    --ci) CI=1; shift ;;
-    --skip-v1) SKIP_V1=1; shift ;;
-    --self-test) SELF_TEST=1; shift ;;
-    --no-build) NO_BUILD=1; shift ;;
-    -h|--help) sed -n '2,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) printf 'unknown option: %s\n' "$1" >&2; exit 2 ;;
+# ---- env restore (the bun/ junk root-cause fix) ----------------------------
+# bun resolves its transpile cache as pathJoin(XDG_CACHE_HOME, "bun"); an
+# EMPTY string yields the relative path "bun", so any bun process whose cwd
+# is the repo root writes ./bun/@t@/*.pile into the repo. The restore below
+# therefore preserves SET/UNSET state per var instead of exporting "".
+
+OQA_PL_REAL_HOME="$HOME"
+OQA_PL_REAL_PATH="$PATH"
+OQA_PL_REAL_TMPDIR="${TMPDIR:-/tmp}"
+OQA_PL_XDG_CONFIG_WAS_SET=0; OQA_PL_REAL_XDG_CONFIG=""
+OQA_PL_XDG_DATA_WAS_SET=0;   OQA_PL_REAL_XDG_DATA=""
+OQA_PL_XDG_CACHE_WAS_SET=0;  OQA_PL_REAL_XDG_CACHE=""
+OQA_PL_XDG_STATE_WAS_SET=0;  OQA_PL_REAL_XDG_STATE=""
+
+oqa_pl_capture_real_env() {
+  OQA_PL_REAL_HOME="$HOME"
+  OQA_PL_REAL_PATH="$PATH"
+  OQA_PL_REAL_TMPDIR="${TMPDIR:-/tmp}"
+  if [ "${XDG_CONFIG_HOME+set}" = "set" ]; then OQA_PL_XDG_CONFIG_WAS_SET=1; OQA_PL_REAL_XDG_CONFIG="$XDG_CONFIG_HOME"; fi
+  if [ "${XDG_DATA_HOME+set}" = "set" ]; then OQA_PL_XDG_DATA_WAS_SET=1; OQA_PL_REAL_XDG_DATA="$XDG_DATA_HOME"; fi
+  if [ "${XDG_CACHE_HOME+set}" = "set" ]; then OQA_PL_XDG_CACHE_WAS_SET=1; OQA_PL_REAL_XDG_CACHE="$XDG_CACHE_HOME"; fi
+  if [ "${XDG_STATE_HOME+set}" = "set" ]; then OQA_PL_XDG_STATE_WAS_SET=1; OQA_PL_REAL_XDG_STATE="$XDG_STATE_HOME"; fi
+}
+
+oqa_pl_restore_real_env() {
+  export HOME="$OQA_PL_REAL_HOME"
+  export TMPDIR="$OQA_PL_REAL_TMPDIR"
+  if [ "$OQA_PL_XDG_CONFIG_WAS_SET" = "1" ]; then export XDG_CONFIG_HOME="$OQA_PL_REAL_XDG_CONFIG"; else unset XDG_CONFIG_HOME; fi
+  if [ "$OQA_PL_XDG_DATA_WAS_SET" = "1" ]; then export XDG_DATA_HOME="$OQA_PL_REAL_XDG_DATA"; else unset XDG_DATA_HOME; fi
+  if [ "$OQA_PL_XDG_CACHE_WAS_SET" = "1" ]; then export XDG_CACHE_HOME="$OQA_PL_REAL_XDG_CACHE"; else unset XDG_CACHE_HOME; fi
+  if [ "$OQA_PL_XDG_STATE_WAS_SET" = "1" ]; then export XDG_STATE_HOME="$OQA_PL_REAL_XDG_STATE"; else unset XDG_STATE_HOME; fi
+}
+
+# ---- real-DB leak analysis --------------------------------------------------
+
+oqa_pl_dump_db_sessions() {
+  # "<id>|<directory>" rows of the real DB (read-only). Missing DB -> empty.
+  local db="$OQA_V2_REAL_HOME/.local/share/opencode/opencode.db" out="$1"
+  if [ -f "$db" ]; then
+    sqlite3 "$db" "SELECT id || '|' || COALESCE(directory,'') FROM session" 2>/dev/null > "$out" || : > "$out"
+  else
+    : > "$out"
+  fi
+}
+
+oqa_pl_json_string_array() { jq -Rn '[inputs]' < "$1" 2>/dev/null || printf '[]'; }
+
+oqa_pl_analyze_db_sessions() {
+  # leak = a NEW session row whose directory is inside the sandbox;
+  # ambient = every other new row (recorded, never gating).
+  local sandbox="$1"
+  awk -F'|' 'NR==FNR { seen[$1] = 1; next } !($1 in seen)' \
+    "$WORK_DIR/db-before.txt" "$WORK_DIR/db-after.txt" > "$WORK_DIR/db-new.txt"
+  awk -F'|' -v sb="$sandbox" 'index($2, sb "/") == 1 || $2 == sb { print $2 }' \
+    "$WORK_DIR/db-new.txt" > "$WORK_DIR/leak-dirs.txt"
+  awk -F'|' -v sb="$sandbox" 'index($2, sb "/") != 1 && $2 != sb { print $2 }' \
+    "$WORK_DIR/db-new.txt" > "$WORK_DIR/ambient-dirs.txt"
+}
+
+session_count_of() {
+  local count
+  count="$(printf '%s' "$1" | sed -n 's/.*sessions=\([0-9?]*\)$/\1/p')"
+  printf '%s' "${count:--1}"
+}
+
+# ---- result table, strict gate, L-18 verdict, bun/ guard --------------------
+
+oqa_pl_verdict_of() {
+  jq -r --arg row "$1" '.[] | select(.row == $row) | .pass |
+    if . == true then "PASS" elif . == false then "FAIL" elif . == "partial" then "PARTIAL"
+    elif . == "stop" then "STOP" else "PENDING" end' "$EV_LIVE/results.json" 2>/dev/null | head -1
+}
+
+oqa_pl_print_table() {
+  local results="$EV_LIVE/results.json"
+  [ -f "$results" ] || { oqa_pl_log "no results.json at $results"; return 1; }
+  printf '%s\n' "---- live parity result table (wave $WAVE) ----"
+  jq -r 'sort_by(.row)[] | "\(.pass |
+    if . == true then "PASS" elif . == false then "FAIL" elif . == "partial" then "PARTIAL"
+    elif . == "stop" then "STOP" else "PENDING" end)  \(.row)  \(.summary)"' "$results"
+  printf '%s\n' "--------------------------------------------------"
+  local fails open_list
+  fails="$(jq '[.[] | select(.pass == false)] | length' "$results")"
+  if [ "${fails:-0}" -gt 0 ]; then
+    oqa_pl_fail "$fails live row(s) FAILED"
+    return 1
+  fi
+  open_list="$(jq -r --argjson w "$WAVE" '[
+    .[] | select((.wave // 99) <= $w and (.pass != true and .pass != false)) |
+    "\(.pass) \(.row) owner: \(.owner // "UNNAMED")"
+  ] | join("; ")' "$results")"
+  if [ -n "$open_list" ]; then
+    printf 'OPEN ROWS REMAIN (wave <= %s): %s\n' "$WAVE" "$open_list"
+    printf '%s\n' "DONE: no row FAILED; open rows remain and are named above with their owners"
+    return 0
+  fi
+  oqa_pl_pass "every executed live row passed"
+}
+
+oqa_pl_strict_gate() {
+  [ "$STRICT" -eq 1 ] || return 0
+  local open
+  open="$(jq -r --argjson w "$WAVE" \
+    '[.[] | select((.wave // 99) <= $w and (.pass != true and .pass != false))] | length' \
+    "$EV_LIVE/results.json" 2>/dev/null || printf '0')"
+  if [ "${open:-0}" -gt 0 ]; then
+    oqa_pl_log "strict gate: $open open row(s) (partial/stop/pending) at wave <= $WAVE"
+    return 1
+  fi
+  return 0
+}
+
+oqa_pl_apply_v1_verdict() {
+  local out="$1" verdict tmp bool summary
+  verdict="$(grep -oE '^L-18 (PASS|FAIL):' "$out" 2>/dev/null | head -1)"
+  if [ -z "$verdict" ]; then
+    oqa_pl_log "no L-18 verdict line found in $out; L-18 stays pending with its owner named"
+    return 1
+  fi
+  bool=true
+  summary="V1 regression verdict (v2-v1-regression.sh): PASS"
+  case "$verdict" in
+    *FAIL*) bool=false; summary="V1 regression verdict (v2-v1-regression.sh): FAIL" ;;
   esac
-done
-[ -n "$WAVE" ] || [ "$SELF_TEST" -eq 1 ] || { printf 'error: --wave is required\n' >&2; exit 2; }
+  tmp="$EV_LIVE/results.json.l18.tmp"
+  jq --argjson pass "$bool" --arg summary "$summary" --arg evidence "$out" \
+    'map(if .row == "L-18" then .pass = $pass | .summary = $summary | .evidence = $evidence else . end)' \
+    "$EV_LIVE/results.json" > "$tmp" && mv "$tmp" "$EV_LIVE/results.json"
+}
 
-# The self-test runs the runner against the stub API only, so it dispatches
-# BEFORE the sandbox library boots the pinned OC2 binary.
-if [ "$SELF_TEST" -eq 1 ]; then
-  bash "$SCRIPT_DIR/lib/v2-live-self-test.sh"
-  exit $?
-fi
-
-. "$SCRIPT_DIR/lib/v2-sandbox.sh"
+oqa_pl_bun_junk_check() {
+  if [ "$REPO_BUN_DIR_BEFORE" = "0" ] && [ -d "$REPO_ROOT/bun" ]; then
+    oqa_pl_log "junk listing: $(find "$REPO_ROOT/bun" -type f 2>/dev/null | wc -l) files under $REPO_ROOT/bun"
+    oqa_pl_fail "a bun/ directory appeared under the repo root during the run ($REPO_ROOT/bun); a non-restored sandbox env leaked bun's relative cache dir"
+    return 1
+  fi
+  return 0
+}
 
 # ---- OC2 verification (fail fast with the bootstrap command) --------------
 oqa_pl_verify_oc2() {
@@ -171,18 +307,26 @@ oqa_pl_tui_smoke() {
 }
 
 TUI_SESSIONS=()
-trap 'for s in "${TUI_SESSIONS[@]:-}"; do [ -n "$s" ] && tmux kill-session -t "$s" 2>/dev/null || true; done; oqa_pl_stop_evt; [ -n "$FAKE_PID" ] && kill "$FAKE_PID" 2>/dev/null || true; oqa_v2_teardown' EXIT
-
-# ---- main live flow ---------------------------------------------------------
-
 WORK_DIR=""
 PROJ_DIR=""
 PROJ_B_DIR=""
+REPO_BUN_DIR_BEFORE=""
+
+# Import mode: the self-test sources this file to exercise the verdict
+# table, the strict gate, the L-18 verdict write-back and the bun/ guard
+# without any OC2 dependency or trap overwrite. Everything above is
+# function/constant definitions only; everything below runs the live flow.
+if [ "${OQA_PL_IMPORT_FOR_TEST:-0}" = "1" ]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+# ---- main live flow ---------------------------------------------------------
 
 oqa_pl_main() {
   oqa_require node bun curl jq sqlite3 git tmux || return 1
   oqa_pl_verify_oc2 || return 1
   [ -f "$RUNNER" ] || { oqa_pl_fail "live-runner.ts not found: $RUNNER"; return 1; }
+  REPO_BUN_DIR_BEFORE="$([ -d "$REPO_ROOT/bun" ] && printf '1' || printf '0')"
 
   if [ "$NO_BUILD" -eq 0 ]; then
     oqa_pl_log "building the plugin (flocked)..."
@@ -201,14 +345,9 @@ oqa_pl_main() {
   WORK_DIR="$(mktemp -d -t oqa-v2-parity.XXXXXX)"
   oqa_pl_log "work dir: $WORK_DIR"
   FAKE_PORT="$(oqa_v2_find_free_port)"
+  oqa_pl_dump_db_sessions "$WORK_DIR/db-before.txt"
 
-  OQA_PL_REAL_HOME="$HOME"
-  OQA_PL_REAL_PATH="$PATH"
-  OQA_PL_REAL_XDG_CONFIG="${XDG_CONFIG_HOME:-}"
-  OQA_PL_REAL_XDG_DATA="${XDG_DATA_HOME:-}"
-  OQA_PL_REAL_XDG_CACHE="${XDG_CACHE_HOME:-}"
-  OQA_PL_REAL_XDG_STATE="${XDG_STATE_HOME:-}"
-  OQA_PL_REAL_TMPDIR="${TMPDIR:-/tmp}"
+  oqa_pl_capture_real_env
   oqa_v2_mk_sandbox || return 1
   local plugin_dir cfg_dir
   plugin_dir="${OQA_V2_PLUGIN_DIR:-$REPO_ROOT}"
@@ -288,9 +427,9 @@ JSON
   "serverStartEpochMs": $server_start_ms,
   ${plugin_first_seen_ms:+$(printf '"pluginFirstSeenEpochMs": %s,' "$plugin_first_seen_ms")}
   "scenarios": {
-    "a": { "sessionID": "$sid_a", "prompt": "Reply with exactly: OQA_A_FINAL", "requestsFile": "$WORK_DIR/req-a/requests.jsonl", "eventsFile": "$WORK_DIR/a.events.sse" },
-    "b": { "sessionID": "$sid_b", "prompt": "Read parity-file.txt and reply with its exact content", "requestsFile": "$WORK_DIR/req-b/requests.jsonl", "eventsFile": "$WORK_DIR/b.events.sse" },
-    "c": { "sessionID": "$sid_c", "prompt": "Run cat", "requestsFile": "$WORK_DIR/req-c/requests.jsonl", "eventsFile": "$WORK_DIR/c.events.sse" }
+    "a": { "sessionID": "$sid_a", "prompt": "Reply with exactly: OQA_A_FINAL", "requestsFile": "$WORK_DIR/req-a/requests.jsonl", "eventsFile": "$WORK_DIR/a.events.sse", "directory": "$PROJ_DIR" },
+    "b": { "sessionID": "$sid_b", "prompt": "Read parity-file.txt and reply with its exact content", "requestsFile": "$WORK_DIR/req-b/requests.jsonl", "eventsFile": "$WORK_DIR/b.events.sse", "directory": "$PROJ_DIR" },
+    "c": { "sessionID": "$sid_c", "prompt": "Run cat", "requestsFile": "$WORK_DIR/req-c/requests.jsonl", "eventsFile": "$WORK_DIR/c.events.sse", "directory": "$PROJ_DIR", "file": "$PROJ_DIR/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n" }
   },
   "locations": [
     { "name": "serve", "directory": "$serve_location" },
@@ -313,7 +452,8 @@ JSON
   local live_rc
   ( cd "$REPO_ROOT" && bun "$RUNNER" --wave "$WAVE" --api "$OQA_V2_SERVER_URL" \
       --password "$OQA_V2_SERVER_PASS" --plugin-log "$OQA_V2_SANDBOX/serve.out" \
-      --host-log "$host_log_path" --manifest "$WORK_DIR/manifest.json" --out "$EV_LIVE" ) \
+      --host-log "$host_log_path" --manifest "$WORK_DIR/manifest.json" --out "$EV_LIVE" \
+      ${STRICT:+--strict} ) \
     > "$EV_LIVE/runner-live.out" 2>&1
   live_rc=$?
   cat "$EV_LIVE/runner-live.out" >&2 || true
@@ -321,46 +461,72 @@ JSON
     oqa_pl_log "live runner reported failures (rc=$live_rc); continuing to teardown for the evidence"
   fi
 
-  # ---- teardown + post phase ----
+  # ---- shutdown, post-shutdown log copies, teardown, post phase ----
   oqa_v2_serve_stop
   sleep 1
   sys_ver_after="$("$sys_cmd" --version 2>/dev/null | tail -1)"
   db_after="$(oqa_v2_real_db_digest)"
+  # The stats lines exist only after the server stopped: refresh the evidence
+  # copies NOW so the post phase evaluates the cleanup-dependent assertions.
   cp "$OQA_V2_SANDBOX/serve.out" "$EV_LIVE/serve.out" 2>/dev/null || true
+  cp "$(oqa_v2_log_path)/opencode.log" "$EV_LIVE/host-opencode.log" 2>/dev/null || true
+  cp "$TMPDIR/oh-my-opencode.log" "$EV_LIVE/plugin-file.log" 2>/dev/null || true
+
+  local sandbox_path="$OQA_V2_SANDBOX"
+  oqa_v2_rm_sandbox
+  oqa_pl_restore_real_env
+
+  oqa_pl_dump_db_sessions "$WORK_DIR/db-after.txt"
+  oqa_pl_analyze_db_sessions "$sandbox_path"
+  local count_before count_after leaks_json ambient_json
+  count_before="$(wc -l < "$WORK_DIR/db-before.txt" | tr -d ' ')"
+  count_after="$(wc -l < "$WORK_DIR/db-after.txt" | tr -d ' ')"
+  leaks_json="$(oqa_pl_json_string_array "$WORK_DIR/leak-dirs.txt")"
+  ambient_json="$(oqa_pl_json_string_array "$WORK_DIR/ambient-dirs.txt")"
+  {
+    printf 'method: sqlite3 id+directory diff of the real opencode.db before/after the run; leak = new session row whose directory is inside the sandbox path\n'
+    printf 'sandbox path: %s\n' "$sandbox_path"
+    printf 'real db digest: %s -> %s\n' "$db_before" "$db_after"
+    printf 'session rows: %s -> %s (delta %s)\n' "$count_before" "$count_after" "$((count_after - count_before))"
+    printf 'leaked rows: %s\n' "$(wc -l < "$WORK_DIR/leak-dirs.txt" | tr -d ' ')"
+    printf 'ambient directories (%s):\n' "$(wc -l < "$WORK_DIR/ambient-dirs.txt" | tr -d ' ')"
+    cat "$WORK_DIR/ambient-dirs.txt"
+  } > "$EV_LIVE/isolation-sessions.txt"
+
   cat > "$WORK_DIR/post-manifest.json" <<JSON
 {
   "wave": $WAVE,
   "pluginId": "${OQA_V2_PLUGIN_ID:-oh-my-openagent}",
   "serverStartEpochMs": $server_start_ms,
   ${plugin_first_seen_ms:+$(printf '"pluginFirstSeenEpochMs": %s,' "$plugin_first_seen_ms")}
-  "scenarios": {},
+  "scenarios": {
+    "a": { "sessionID": "$sid_a", "prompt": "Reply with exactly: OQA_A_FINAL", "requestsFile": "$WORK_DIR/req-a/requests.jsonl", "eventsFile": "$WORK_DIR/a.events.sse", "directory": "$PROJ_DIR" },
+    "b": { "sessionID": "$sid_b", "prompt": "Read parity-file.txt and reply with its exact content", "requestsFile": "$WORK_DIR/req-b/requests.jsonl", "eventsFile": "$WORK_DIR/b.events.sse", "directory": "$PROJ_DIR" },
+    "c": { "sessionID": "$sid_c", "prompt": "Run cat", "requestsFile": "$WORK_DIR/req-c/requests.jsonl", "eventsFile": "$WORK_DIR/c.events.sse", "directory": "$PROJ_DIR", "file": "$PROJ_DIR/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n" }
+  },
   "locations": [],
-  "pluginFileLog": "$plugin_file_log",
-  "sandboxPath": "$OQA_V2_SANDBOX",
+  "pluginFileLog": "$EV_LIVE/plugin-file.log",
+  "sandboxPath": "$sandbox_path",
   "isolation": {
     "systemVersionBefore": "$sys_ver_before",
     "systemVersionAfter": "$sys_ver_after",
     "dbDigestBefore": "$db_before",
     "dbDigestAfter": "$db_after",
-    "sessionCountBefore": $(session_count_of "$db_before"),
-    "sessionCountAfter": $(session_count_of "$db_after")
+    "sessionCountBefore": $count_before,
+    "sessionCountAfter": $count_after,
+    "method": "sqlite3 id+directory diff of the real opencode.db before/after the run; leak = new session row whose directory is inside the sandbox path",
+    "leakedSessionDirectories": $leaks_json,
+    "ambientSessionDirectories": $ambient_json
   }
 }
 JSON
-  oqa_v2_rm_sandbox
-  # The sandbox exports are still live after the removal; any later process
-  # (the post-phase bun runner) would recreate cache/data dirs inside the
-  # removed path and flip L-15, so restore the real environment first.
-  export HOME="$OQA_PL_REAL_HOME" XDG_CONFIG_HOME="$OQA_PL_REAL_XDG_CONFIG"
-  export XDG_DATA_HOME="$OQA_PL_REAL_XDG_DATA" XDG_CACHE_HOME="$OQA_PL_REAL_XDG_CACHE"
-  export XDG_STATE_HOME="$OQA_PL_REAL_XDG_STATE" TMPDIR="$OQA_PL_REAL_TMPDIR"
 
   oqa_pl_log "running the live runner (post phase)..."
   local post_rc
   ( cd "$REPO_ROOT" && bun "$RUNNER" --wave "$WAVE" --api "$OQA_V2_SERVER_URL" \
       --password "$OQA_V2_SERVER_PASS" --plugin-log "$EV_LIVE/serve.out" \
       --host-log "$EV_LIVE/host-opencode.log" --manifest "$WORK_DIR/post-manifest.json" \
-      --out "$EV_LIVE" --post ) > "$EV_LIVE/runner-post.out" 2>&1
+      --out "$EV_LIVE" --post ${STRICT:+--strict} ) > "$EV_LIVE/runner-post.out" 2>&1
   post_rc=$?
   cat "$EV_LIVE/runner-post.out" >&2 || true
 
@@ -371,38 +537,60 @@ JSON
       TERM="${TERM:-xterm}" bash "$SCRIPT_DIR/v2-v1-regression.sh" > "$EV_LIVE/v1-regression.out" 2>&1
     v1_rc=$?
     cat "$EV_LIVE/v1-regression.out" >&2 || true
+    oqa_pl_apply_v1_verdict "$EV_LIVE/v1-regression.out" || true
+  else
+    oqa_pl_log "--skip-v1: L-18 stays pending with its owner named (owner: v2-v1-regression.sh)"
   fi
 
   oqa_pl_print_table || true
+  oqa_pl_bun_junk_check || true
 
   local rc=1
-  if [ "$live_rc" -eq 0 ] && [ "$post_rc" -eq 0 ] && [ "$v1_rc" -eq 0 ] && [ "$FAILS" -eq 0 ]; then rc=0; fi
+  if [ "$live_rc" -eq 0 ] && [ "$post_rc" -eq 0 ] && [ "$v1_rc" -eq 0 ] && [ "$FAILS" -eq 0 ] && oqa_pl_strict_gate; then rc=0; fi
   return "$rc"
-}
-
-session_count_of() {
-  local count
-  count="$(printf '%s' "$1" | sed -n 's/.*sessions=\([0-9?]*\)$/\1/p')"
-  printf '%s' "${count:--1}"
-}
-
-oqa_pl_print_table() {
-  local results="$EV_LIVE/results.json"
-  [ -f "$results" ] || { oqa_pl_log "no results.json at $results"; return 1; }
-  printf '%s\n' "---- live parity result table (wave $WAVE) ----"
-  jq -r 'sort_by(.row)[] | "\(if .pass == true then "PASS" elif .pass == false then "FAIL" elif .pass == "stop" then "STOP" else "PENDING" end)  \(.row)  \(.summary)"' "$results"
-  printf '%s\n' "--------------------------------------------------"
-  local fails
-  fails="$(jq '[.[] | select(.pass == false)] | length' "$results")"
-  if [ "${fails:-0}" -gt 0 ]; then
-    oqa_pl_fail "$fails live row(s) FAILED"
-    return 1
-  fi
-  oqa_pl_pass "every executed live row passed"
 }
 
 EV_LIVE="${OQA_V2_OUT:-$REPO_ROOT/.omo/evidence/$(date +%Y%m%d)-opencode-v2-compat/task-20/live}"
 WORK_BUILD_LOG="$(mktemp -t oqa-v2-parity-build.XXXXXX.log)"
 [ "$CI" -eq 1 ] && oqa_pl_log "ci mode: non-interactive, evidence under $EV_LIVE"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --wave) [ $# -ge 2 ] || { printf 'error: --wave requires a number\n' >&2; exit 2; }; WAVE="$2"; shift 2 ;;
+    --ci) CI=1; shift ;;
+    --strict) STRICT=1; shift ;;
+    --skip-v1) SKIP_V1=1; shift ;;
+    --self-test) SELF_TEST=1; shift ;;
+    --no-build) NO_BUILD=1; shift ;;
+    -h|--help) sed -n '2,36p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) printf 'unknown option: %s\n' "$1" >&2; exit 2 ;;
+  esac
+done
+[ -n "$WAVE" ] || [ "$SELF_TEST" -eq 1 ] || { printf 'error: --wave is required\n' >&2; exit 2; }
+
+# The self-test runs the runner against the stub API only, so it dispatches
+# BEFORE the sandbox library boots the pinned OC2 binary.
+if [ "$SELF_TEST" -eq 1 ]; then
+  bash "$SCRIPT_DIR/lib/v2-live-self-test.sh"
+  exit $?
+fi
+
+. "$SCRIPT_DIR/lib/v2-sandbox.sh"
+
+oqa_pl_on_exit() {
+  for s in "${TUI_SESSIONS[@]:-}"; do [ -n "$s" ] && tmux kill-session -t "$s" 2>/dev/null || true; done
+  oqa_pl_stop_evt
+  [ -n "$FAKE_PID" ] && kill "$FAKE_PID" 2>/dev/null || true
+  oqa_v2_teardown
+  [ -n "$WORK_DIR" ] && rm -rf "$WORK_DIR"
+}
+# bash does not run EXIT traps on untrapped fatal signals; route them through
+# exit so the teardown chain (sandbox + WORK_DIR removal) always runs. The
+# registration sits AFTER the --self-test dispatch and the sandbox sourcing
+# (oqa_v2_teardown must exist), so the self-test run never arms this trap.
+trap oqa_pl_on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+
 oqa_pl_main
 exit $?

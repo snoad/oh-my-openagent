@@ -16,6 +16,11 @@
 #
 # Env:
 #   OQA_V1_EVIDENCE   evidence copy dir (default none)
+#
+# System dependencies: bash, the system V1 `opencode` binary (1.x), curl, jq,
+# sqlite3 and tmux (tui-smoke.sh). The CI job of plan task 21 installs only
+# tmux and jq on ubuntu-latest; curl/git/sqlite3 are preinstalled there and
+# the job runs with --skip-v1, so the V1 host is a local-QA dependency only.
 
 set -uo pipefail
 
@@ -60,15 +65,27 @@ oqa_v1r_wait_health() {
   return 1
 }
 
+oqa_v1r_dump_db_sessions() {
+  # "<id>|<directory>" rows of the real DB (read-only). Missing DB -> empty.
+  local db="$1" out="$2"
+  if [ -f "$db" ]; then
+    sqlite3 "$db" "SELECT id || '|' || COALESCE(directory,'') FROM session" 2>/dev/null > "$out" || : > "$out"
+  else
+    : > "$out"
+  fi
+}
+
 oqa_v1r_main() {
   oqa_require opencode curl jq sqlite3 || return 1
   oqa_v1r_require_v1_host || return 1
   [ -f "$FIXTURES_DIR/agents.json" ] || { oqa_v1r_fail "v1-baseline fixture missing (run v2-v1-baseline.sh first)"; return 1; }
   [ -f "$REPO_ROOT/dist/index.js" ] || { oqa_v1r_fail "dist/index.js not found (run bun run build first)"; return 1; }
 
-  local real_db before after
+  local real_db dump_before dump_after
   real_db="$(oqa_db_path)"
-  before="$(sqlite3 "$real_db" 'SELECT count(*) FROM session' 2>/dev/null || printf '?')"
+  dump_before="$(mktemp -t oqa-v1r-db.XXXXXX)"
+  dump_after="$(mktemp -t oqa-v1r-db.XXXXXX)"
+  oqa_v1r_dump_db_sessions "$real_db" "$dump_before"
 
   oqa_mk_isolated_xdg || return 1
   mkdir -p "$HOME/.omo"
@@ -77,6 +94,7 @@ oqa_v1r_main() {
   printf '{\n  "plugin": ["file://%s"]\n}\n' "$REPO_ROOT" > "$XDG_CONFIG_HOME/opencode/opencode.jsonc"
 
   local neutral="$OQA_XDG_ROOT/neutral"
+  local xdg_root="$OQA_XDG_ROOT"
   mkdir -p "$neutral"
 
   local port pass
@@ -93,6 +111,7 @@ oqa_v1r_main() {
     oqa_v1r_fail "V1 server did not become ready; log follows:"
     cat "$XDG_STATE_HOME/serve.log" >&2 2>/dev/null || true
     oqa_cleanup
+    rm -f "$dump_before" "$dump_after"
     return 1
   fi
 
@@ -114,11 +133,34 @@ oqa_v1r_main() {
   oqa_cleanup
   unset OQA_SERVER_PID OQA_SERVER_URL OQA_SERVER_PASS OQA_SERVER_PORT
 
-  after="$(sqlite3 "$real_db" 'SELECT count(*) FROM session' 2>/dev/null || printf '?')"
-  if [ "$before" = "$after" ]; then
-    oqa_v1r_pass "isolation: real opencode.db session count unchanged ($after)"
+  # Leak-based isolation: unrelated processes may create real-DB sessions
+  # during the window (recorded as ambient, never gating); a real leak is
+  # any NEW session row whose directory lies inside the V1 sandbox root.
+  oqa_v1r_dump_db_sessions "$real_db" "$dump_after"
+  local count_before count_after leak_count
+  count_before="$(wc -l < "$dump_before" | tr -d ' ')"
+  count_after="$(wc -l < "$dump_after" | tr -d ' ')"
+  awk -F'|' 'NR==FNR { seen[$1] = 1; next } !($1 in seen)' "$dump_before" "$dump_after" > "$dump_after.new"
+  leak_count="$(awk -F'|' -v root="$xdg_root" 'index($2, root "/") == 1 || $2 == root' "$dump_after.new" | wc -l | tr -d ' ')"
+  awk -F'|' -v root="$xdg_root" 'index($2, root "/") == 1 || $2 == root' "$dump_after.new" > "$work/leak-rows.txt" 2>/dev/null || : > "$work/leak-rows.txt"
+  awk -F'|' -v root="$xdg_root" 'index($2, root "/") != 1 && $2 != root { print $2 }' "$dump_after.new" > "$work/ambient-dirs.txt" 2>/dev/null || : > "$work/ambient-dirs.txt"
+  {
+    printf 'method: sqlite3 id+directory diff of %s before/after the run\n' "$real_db"
+    printf 'sandbox root: %s\n' "$xdg_root"
+    printf 'session count: %s -> %s\n' "$count_before" "$count_after"
+    printf 'leaked rows: %s\n' "$leak_count"
+    printf 'ambient directories:\n'
+    cat "$work/ambient-dirs.txt"
+  } > "$work/isolation.txt"
+  if [ -n "${OQA_V1_EVIDENCE:-}" ]; then
+    mkdir -p "$OQA_V1_EVIDENCE"
+    cp "$work/isolation.txt" "$OQA_V1_EVIDENCE/isolation.txt" 2>/dev/null || true
+  fi
+  if [ "$leak_count" -gt 0 ]; then
+    oqa_v1r_fail "isolation: $leak_count real-DB session row(s) created inside the V1 sandbox ($xdg_root)"
+    head -5 "$work/leak-rows.txt" >&2 || true
   else
-    oqa_v1r_fail "isolation: real opencode.db session count changed ($before -> $after)"
+    oqa_v1r_pass "isolation: no real-DB session leaked into the V1 sandbox ($count_before -> $count_after, $(wc -l < "$work/ambient-dirs.txt" | tr -d ' ') ambient row(s) recorded)"
   fi
 
   agent_ok=0
@@ -166,6 +208,7 @@ oqa_v1r_main() {
     cp "$work/agents-live.json" "$OQA_V1_EVIDENCE/agents-live.json" 2>/dev/null || true
   fi
   rm -rf "$work"
+  rm -f "$dump_before" "$dump_after" "$dump_after.new"
 
   local tui_ok=1
   if [ "$RUN_TUI" -eq 1 ]; then

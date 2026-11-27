@@ -11,6 +11,9 @@ export type LiveScenarioRun = {
   readonly prompt: string
   readonly requestsFile: string
   readonly eventsFile: string
+  readonly directory?: string
+  readonly file?: string
+  readonly fileContent?: string
 }
 
 export type LiveLocation = {
@@ -26,6 +29,9 @@ export type LiveIsolationReceipt = {
   readonly dbDigestAfter?: string
   readonly sessionCountBefore?: number
   readonly sessionCountAfter?: number
+  readonly method?: string
+  readonly leakedSessionDirectories?: readonly string[]
+  readonly ambientSessionDirectories?: readonly string[]
 }
 
 export type LiveManifest = {
@@ -46,10 +52,13 @@ export type LiveManifest = {
   readonly scriptedSteps?: Readonly<Record<string, number>>
 }
 
+// A check answers "partial" only together with a named owner: the owner says
+// which later-wave task owns the deferred assertion and re-proves it.
 export type LiveCheckOutcome = {
-  readonly pass: true | false | "pending" | "stop"
+  readonly pass: true | false | "partial" | "pending" | "stop"
   readonly summary: string
   readonly evidence: string
+  readonly owner?: string
 }
 
 export type LivePluginState = {
@@ -66,6 +75,7 @@ export type LiveCheckContext = {
   readonly hostLogPath: string
   readonly outDir: string
   readonly wave: number
+  readonly phase: "live" | "post"
   pluginState: LivePluginState
 }
 
@@ -149,6 +159,15 @@ export function stop(summary: string, evidence: string): LiveCheckOutcome {
   return { pass: "stop", summary, evidence }
 }
 
+export function partial(summary: string, evidence: string, owner: string): LiveCheckOutcome {
+  return { pass: "partial", summary, evidence, owner }
+}
+
 export function pendingOutcome(rowId: string, reason: string): LiveCheckOutcome {
-  return { pass: "pending", summary: `${rowId} pending: ${reason}`, evidence: `${rowId} pending: ${reason}\n` }
+  return {
+    pass: "pending",
+    summary: `${rowId} pending: ${reason}`,
+    evidence: `${rowId} pending: ${reason}\n`,
+    owner: reason,
+  }
 }

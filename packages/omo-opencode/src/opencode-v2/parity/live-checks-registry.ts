@@ -1,14 +1,16 @@
 import type { ParityRow } from "./rows"
 import { pendingOutcome, type LiveCheck } from "./live-check-context"
 import { checkNoPluginLoadError, checkPluginActive, checkPluginActiveWithin60s } from "./live-checks-plugin"
-import { checkChatMessageAdmission, checkSystemTransform, checkToolHooks } from "./live-checks-session"
-import { checkEventPipeline, checkHostNotice, checkLocationEngines, checkTranslatorBudget } from "./live-checks-host"
+import { checkChatMessageAdmission, checkSystemTransform } from "./live-checks-session"
+import { checkToolHooks } from "./live-check-tool-hooks"
+import { checkEventPipeline, checkTranslatorBudget } from "./live-checks-events"
+import { checkHostNotice, checkLocationEngines } from "./live-checks-host"
 import { checkIsolation } from "./live-checks-isolation"
 
 // The live check registry (plan task 20): one entry per live row id L-01..
 // L-26, so no live row is ever without an owner. Rows whose owning task has
-// not landed yet resolve to a pending stub with the reason; L-17, L-18 and
-// L-19 are owned by other scripts and never execute here.
+// not landed yet resolve to a pending stub with the owner as the reason;
+// L-17, L-18 and L-19 are owned by other scripts and never execute here.
 
 const CHECKS: Readonly<Record<string, LiveCheck>> = {
   "L-01": checkPluginActive,
@@ -26,7 +28,7 @@ const CHECKS: Readonly<Record<string, LiveCheck>> = {
 
 const OTHER_SCRIPT_OWNERS: Readonly<Record<string, string>> = {
   "L-17": "the TUI smoke script (plan task 37)",
-  "L-18": "v2-v1-regression.sh",
+  "L-18": "v2-v1-regression.sh (stays pending with --skip-v1)",
   "L-19": "the installed-tarball check (plan task 41)",
 }
 

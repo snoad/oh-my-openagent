@@ -3,10 +3,20 @@
 #
 # Runs V2/parity/live-runner.ts against a tiny stub API (canned responses
 # served by lib/v2-live-stub.mjs) and proves PASS and FAIL detection for
-# EACH implemented check: one all-good run (every executed row PASS), one
-# broken run per check (the targeted row must report FAIL), one post-phase
-# run (L-15 PASS on a removed sandbox) plus its broken variant, and the L-22
-# process-wide STOP verdict.
+# every implemented check. The stub models the FIXED runtime: the scenario B
+# read result carries hashline LINE# tags, the scenario C shell result
+# carries the V1 guard message byte-for-byte (and never the file content),
+# and the cleanup stats lines are present in serve.out. Coverage:
+#   good live run    L-01/L-02/L-07/L-09/L-11/L-20/L-21/L-22/L-24 PASS,
+#                    L-08 PARTIAL (sisyphus line deferred), L-15/L-18 pending
+#   good post run    L-15 PASS (ambient sessions tolerated), L-11 PASS
+#                    (stats line, translated > 0), L-24 PASS (bound holds)
+#   broken runs      one targeted mutation per FAIL case (see the case list
+#                    in main) plus the L-08 full-strength PASS case and the
+#                    L-22 process-wide STOP verdict
+#   driver tests     truthful final line, --strict gate, L-18 verdict
+#                    write-back, bun/ junk guard (driver sourced in import
+#                    mode; no OC2 dependency)
 
 set -uo pipefail
 
@@ -14,6 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$SCRIPT_DIR"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../../.." && pwd)"
 RUNNER="$REPO_ROOT/packages/omo-opencode/src/opencode-v2/parity/live-runner.ts"
+FIXTURES_ROOT="$REPO_ROOT/packages/omo-opencode/src/opencode-v2/parity/fixtures/v1-baseline"
 # shellcheck source=common.sh
 . "$LIB_DIR/common.sh"
 
@@ -62,7 +73,9 @@ run_runner() {
 
 row_pass() {
   local results="$1" row="$2"
-  jq -r --arg row "$row" '.[] | select(.row == $row) | .pass | if . == true then "true" elif . == false then "false" elif . == "stop" then "stop" else "pending" end' "$results" 2>/dev/null
+  jq -r --arg row "$row" '.[] | select(.row == $row) | .pass |
+    if . == true then "true" elif . == false then "false" elif . == "partial" then "partial"
+    elif . == "stop" then "stop" else "pending" end' "$results" 2>/dev/null
 }
 
 expect_row() {
@@ -75,23 +88,63 @@ expect_row() {
   fi
 }
 
-# ---- canned good data -------------------------------------------------------
+# ---- canned good data (models the FIXED runtime) ----------------------------
+
+GUARD_MESSAGE="Prefer the Read tool over \`cat\`/\`head\`/\`tail\` for reading file contents. The Read tool provides line numbers and hash anchors for precise editing."
+
+# Rewrites the stats line of <projdir> inside a serve.out copy.
+oqa_st_set_stats() {
+  local f="$1" pd="$2" es="$3" tr="$4" fw="$5" cb="$6" cf="$7" cff="$8"
+  local prefix='[opencode-v2] event stats '
+  local newline="${prefix}{\"directory\":\"$pd\",\"eventsSeen\":$es,\"translated\":$tr,\"fetchWorthy\":$fw,\"coalesceBatches\":$cb,\"contextFetches\":$cf,\"contextFetchFailures\":$cff}"
+  awk -v pd="$pd" -v nl="$newline" -v px="$prefix" '
+    index($0, px) == 1 {
+      tail = substr($0, length(px) + 1)
+      if (index(tail, "{\"directory\":\"" pd "\"") == 1) { print nl; next }
+    }
+    { print }
+  ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+}
+
+oqa_st_del_stats_lines() { sed -i '/^\[opencode-v2\] event stats /d' "$1"; }
+
+oqa_st_write_ctx_b_notag() {
+  cat > "$1/context-ses_stub_b.json" <<'JSON'
+{"data":[{"id":"m1","type":"user","text":"Read parity-file.txt"},{"id":"m2","type":"assistant","agent":"build","content":[{"type":"tool","id":"call_1","name":"read","state":{"status":"completed","content":[{"type":"text","text":"Read file /tmp/probe.txt, lines 1-2\n1: hello\n2: world"}]}}]}]}
+JSON
+}
+
+oqa_st_write_ctx_c_plain() {
+  cat > "$1/context-ses_stub_c.json" <<'JSON'
+{"data":[{"id":"m1","type":"user","text":"cat"},{"id":"m2","type":"assistant","agent":"build","content":[{"type":"tool","id":"call_1","name":"shell","state":{"status":"completed","content":[{"type":"text","text":"parity row nine file\nsecond line\n"}]}}]}]}
+JSON
+}
+
+oqa_st_write_ctx_c_leak() {
+  cat > "$1/context-ses_stub_c.json" <<JSON
+{"data":[{"id":"m1","type":"user","text":"cat"},{"id":"m2","type":"assistant","agent":"build","content":[{"type":"tool","id":"call_1","name":"shell","state":{"status":"completed","content":[{"type":"text","text":"$GUARD_MESSAGE\nparity row nine file\nsecond line\n"}]}}]}]}
+JSON
+}
+
+oqa_st_sisyphus_first_line() {
+  jq -r '.sisyphus' "$FIXTURES_ROOT/agent-prompts.json" 2>/dev/null | head -1
+}
 
 write_good_dir() {
   local dir="$1" start first_seen
-  mkdir -p "$dir/req-a" "$dir/req-b"
+  mkdir -p "$dir/req-a" "$dir/req-b" "$dir/proj-a" "$dir/proj-b"
   start="$(date +%s%3N)"
   first_seen=$((start + 3000))
   cat > "$dir/plugin.json" <<JSON
 {"location":{"directory":"$dir"},"data":[{"id":"oh-my-openagent","source":{"type":"local","path":"$dir"},"features":{"server":true},"state":{"status":"active"}}]}
 JSON
-  cat > "$dir/context-ses_stub_b.json" <<'JSON'
-{"data":[{"id":"m1","type":"user","text":"Read parity-file.txt"},{"id":"m2","type":"assistant","agent":"build","content":[{"type":"tool","id":"call_1","name":"read","state":{"status":"completed","content":[{"type":"text","text":"Read file /tmp/probe.txt, lines 1-2\n1: hello\n2: world"}]}}]}]}
+  cat > "$dir/context-ses_stub_b.json" <<JSON
+{"data":[{"id":"m1","type":"user","text":"Read parity-file.txt"},{"id":"m2","type":"assistant","agent":"build","content":[{"type":"tool","id":"call_1","name":"read","state":{"status":"completed","content":[{"type":"text","text":"Read file /tmp/probe.txt, lines 1-2\n1#ZP|hello\n2#QM|world"}]}}]}]}
 JSON
-  cat > "$dir/context-ses_stub_c.json" <<'JSON'
-{"data":[{"id":"m1","type":"user","text":"cat"},{"id":"m2","type":"assistant","agent":"build","content":[{"type":"tool","id":"call_1","name":"shell","state":{"status":"completed","content":[{"type":"text","text":"hello\nworld\n"}]}}]}]}
+  cat > "$dir/context-ses_stub_c.json" <<JSON
+{"data":[{"id":"m1","type":"user","text":"cat"},{"id":"m2","type":"assistant","agent":"build","content":[{"type":"tool","id":"call_1","name":"shell","state":{"status":"completed","content":[{"type":"text","text":"$GUARD_MESSAGE"}]}}]}]}
 JSON
-  cat > "$dir/serve.out" <<'LOG'
+  cat > "$dir/serve.out" <<LOG
 server listening on http://127.0.0.1:1
 [opencode-v2] host supported 2.4.1
 [oh-my-openagent] ENTRY - plugin loading
@@ -114,6 +167,8 @@ server listening on http://127.0.0.1:1
 [config-migration] startup completed
 [opencode-v2] engine started
 [opencode-v2] [v2-events] session.renamed merged the title of ses_stub_locb into the session info registry
+[opencode-v2] event stats {"directory":"$dir/proj-a","eventsSeen":42,"translated":40,"fetchWorthy":10,"coalesceBatches":2,"contextFetches":11,"contextFetchFailures":0}
+[opencode-v2] event stats {"directory":"$dir/proj-b","eventsSeen":9,"translated":9,"fetchWorthy":3,"coalesceBatches":1,"contextFetches":3,"contextFetchFailures":0}
 LOG
   cat > "$dir/host.log" <<'LOG'
 timestamp=2026-11-27T00:00:00.000Z level=INFO run=1 message="database schema bootstrap started" migrations=64 role=server
@@ -155,9 +210,9 @@ SSE
   "serverStartEpochMs": $start,
   "pluginFirstSeenEpochMs": $first_seen,
   "scenarios": {
-    "a": {"sessionID": "ses_stub_a", "prompt": "Reply with exactly: OQA_A_FINAL", "requestsFile": "$dir/req-a/requests.jsonl", "eventsFile": "$dir/events-a.sse"},
-    "b": {"sessionID": "ses_stub_b", "prompt": "Read parity-file.txt", "requestsFile": "$dir/req-b/requests.jsonl", "eventsFile": "$dir/events-b.sse"},
-    "c": {"sessionID": "ses_stub_c", "prompt": "Run cat", "requestsFile": "$dir/req-b/requests.jsonl", "eventsFile": "$dir/events-b.sse"}
+    "a": {"sessionID": "ses_stub_a", "prompt": "Reply with exactly: OQA_A_FINAL", "requestsFile": "$dir/req-a/requests.jsonl", "eventsFile": "$dir/events-a.sse", "directory": "$dir/proj-a"},
+    "b": {"sessionID": "ses_stub_b", "prompt": "Read parity-file.txt", "requestsFile": "$dir/req-b/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a"},
+    "c": {"sessionID": "ses_stub_c", "prompt": "Run cat", "requestsFile": "$dir/req-b/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a", "file": "$dir/proj-a/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n"}
   },
   "locations": [
     {"name": "serve", "directory": "$dir/serve"},
@@ -177,27 +232,39 @@ JSON
   "pluginId": "oh-my-openagent",
   "serverStartEpochMs": $start,
   "pluginFirstSeenEpochMs": $first_seen,
-  "scenarios": {},
+  "scenarios": {
+    "a": {"sessionID": "ses_stub_a", "prompt": "Reply with exactly: OQA_A_FINAL", "requestsFile": "$dir/req-a/requests.jsonl", "eventsFile": "$dir/events-a.sse", "directory": "$dir/proj-a"},
+    "b": {"sessionID": "ses_stub_b", "prompt": "Read parity-file.txt", "requestsFile": "$dir/req-b/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a"},
+    "c": {"sessionID": "ses_stub_c", "prompt": "Run cat", "requestsFile": "$dir/req-b/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a", "file": "$dir/proj-a/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n"}
+  },
   "locations": [],
+  "pluginFileLog": "$dir/plugin-file.log",
   "sandboxPath": "$dir/sandbox-gone",
   "isolation": {
     "systemVersionBefore": "1.19.4",
     "systemVersionAfter": "1.19.4",
     "dbDigestBefore": "abc sessions=100",
-    "dbDigestAfter": "def sessions=100",
+    "dbDigestAfter": "def sessions=103",
     "sessionCountBefore": 100,
-    "sessionCountAfter": 100
+    "sessionCountAfter": 103,
+    "method": "sqlite3 id+directory diff of the real opencode.db before/after the run; leak = new session row whose directory is inside the sandbox path",
+    "leakedSessionDirectories": [],
+    "ambientSessionDirectories": ["$dir/ambient-proj-x", "$dir/ambient-proj-y"]
   }
 }
 JSON
 }
 
-# Rewrites every $OLD path prefix inside a manifest to the new dir.
-rebase_manifest() {
-  local manifest="$1" old="$2" new="$3"
-  jq --arg old "$old" --arg new "$new" \
-    'walk(if type == "string" then sub("^" + $old; $new) else . end)' "$manifest" > "$manifest.tmp"
-  mv "$manifest.tmp" "$manifest"
+# Rewrites every $OLD path prefix inside the manifests and the serve.out
+# stats directories to the new dir.
+rebase_case() {
+  local dir="$1" old="$2" new="$3"
+  for f in "$dir/manifest.json" "$dir/post-manifest.json"; do
+    jq --arg old "$old" --arg new "$new" \
+      'walk(if type == "string" then sub("^" + $old; $new) else . end)' "$f" > "$f.tmp"
+    mv "$f.tmp" "$f"
+  done
+  sed -i "s|$old|$new|g" "$dir/serve.out"
 }
 
 # ---- the self-test ----------------------------------------------------------
@@ -208,76 +275,115 @@ main() {
   local good="$TMP/good"
   write_good_dir "$good"
 
-  # 1. all-good live phase: every executed row PASS, L-15 pending
+  # 1. all-good live phase: executed rows PASS, L-08 PARTIAL, L-15/L-18 pending
   start_stub "$good" || { oqa_st_fail "stub did not start"; return 1; }
   run_runner "$good" "$good/manifest.json" "$good/out-live" || true
   local results="$good/out-live/results.json"
-  for row in L-01 L-02 L-07 L-08 L-09 L-11 L-20 L-21 L-22 L-24; do
+  for row in L-01 L-02 L-07 L-09 L-11 L-20 L-21 L-22 L-24; do
     expect_row "$results" "$row" "true" "good live"
   done
+  expect_row "$results" "L-08" "partial" "good live"
   expect_row "$results" "L-15" "pending" "good live"
   expect_row "$results" "L-18" "pending" "good live"
 
-  # 2. all-good post phase: L-15 PASS
+  # 2. all-good post phase: L-15 PASS (ambient tolerated), L-11/L-24 PASS
   run_runner "$good" "$good/post-manifest.json" "$good/out-live" "--post" || true
   expect_row "$good/out-live/results.json" "L-15" "true" "good post"
+  expect_row "$good/out-live/results.json" "L-11" "true" "good post"
+  expect_row "$good/out-live/results.json" "L-24" "true" "good post"
 
-  # 3. broken case per implemented check (targeted row must FAIL)
+  # 3. broken case per strictened check (targeted row must FAIL).
+  #    post=1 runs live then post so the cleanup-stats gates are evaluated.
   broken_case() {
-    local row="$1" label="$2" mutation="$3"
-    local dir="$TMP/case-$row"
+    local row="$1" label="$2" mutation="$3" post="${4:-0}" want="false"
+    local dir="$TMP/case-$row-$label"
     cp -r "$good" "$dir"
-    rm -rf "$dir/out-live" "$dir/sandbox-gone-kept"
+    rm -rf "$dir/out-live" "$dir/out" "$dir/sandbox-gone-kept"
+    rebase_case "$dir" "$good" "$dir"
     eval "$mutation" >/dev/null 2>&1
-    rebase_manifest "$dir/manifest.json" "$good" "$dir"
-    rebase_manifest "$dir/post-manifest.json" "$good" "$dir"
     start_stub "$dir" || { oqa_st_fail "$label: stub did not start"; return 1; }
     run_runner "$dir" "$dir/manifest.json" "$dir/out" || true
-    expect_row "$dir/out/results.json" "$row" "false" "$label"
+    if [ "$post" = "1" ]; then
+      run_runner "$dir" "$dir/post-manifest.json" "$dir/out" "--post" || true
+    fi
+    expect_row "$dir/out/results.json" "$row" "$want" "$label"
   }
 
-  broken_case "L-01" "plugin not active" \
-    "jq '.data[0].state.status = \"error\"' '$TMP/case-L-01/plugin.json' > '$TMP/case-L-01/plugin.json.tmp' && mv '$TMP/case-L-01/plugin.json.tmp' '$TMP/case-L-01/plugin.json'"
-  broken_case "L-02" "host log carries a plugin error line" \
-    "printf '%s\n' 'timestamp=x level=ERROR run=1 message=\"Plugin must export a default definition with an id\" role=server' >> '$TMP/case-L-02/host.log'"
-  broken_case "L-07" "chat.message marker missing" \
-    "sed -i '/hook chat.message fired/d' '$TMP/case-L-07/serve.out'"
-  broken_case "L-08" "system transform marker missing" \
-    "sed -i '/hook experimental.chat.system.transform fired/d' '$TMP/case-L-08/serve.out'"
-  broken_case "L-09" "guard warn line missing" \
-    "sed -i '/bash-file-read-guard/d' '$TMP/case-L-09/plugin-file.log'"
-  broken_case "L-11" "session.created missing" \
-    "grep -v 'session.created' '$TMP/case-L-11/events-a.sse' > '$TMP/case-L-11/events-a.sse.tmp' && mv '$TMP/case-L-11/events-a.sse.tmp' '$TMP/case-L-11/events-a.sse'"
-  broken_case "L-20" "activation over budget" \
-    "jq '.pluginFirstSeenEpochMs = .serverStartEpochMs + 61000' '$TMP/case-L-20/manifest.json' > '$TMP/case-L-20/manifest.json.tmp' && mv '$TMP/case-L-20/manifest.json.tmp' '$TMP/case-L-20/manifest.json'"
-  broken_case "L-21" "host unsupported line" \
-    "printf '%s\n' '[opencode-v2] host unsupported floor 2.3.9' >> '$TMP/case-L-21/serve.out'"
-  broken_case "L-22" "engine count mismatch" \
-    "sed -i '0,/engine started/{/engine started/d}' '$TMP/case-L-22/serve.out'"
-  broken_case "L-24" "no fetch-worthy events" \
-    "grep -v -E 'tool.called|step.started' '$TMP/case-L-24/events-b.sse' > '$TMP/case-L-24/events-b.sse.tmp' && mv '$TMP/case-L-24/events-b.sse.tmp' '$TMP/case-L-24/events-b.sse'"
+  broken_case "L-01" "plugin-not-active" \
+    "jq '.data[0].state.status = \"error\"' '$TMP/case-L-01-plugin-not-active/plugin.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-01-plugin-not-active/plugin.json'"
+  broken_case "L-02" "plugin-error-line" \
+    "printf '%s\n' 'timestamp=x level=ERROR run=1 message=\"Plugin must export a default definition with an id\" role=server' >> '$TMP/case-L-02-plugin-error-line/host.log'"
+  broken_case "L-07" "chat-marker-missing" \
+    "sed -i '/hook chat.message fired/d' '$TMP/case-L-07-chat-marker-missing/serve.out'"
+  broken_case "L-08" "system-marker-missing" \
+    "sed -i '/hook experimental.chat.system.transform fired/d' '$TMP/case-L-08-system-marker-missing/serve.out'"
 
-  # 4. L-15 broken post phase: sandbox still exists + session count changed
-  local dir="$TMP/case-L-15"
-  cp -r "$good" "$dir"
-  rm -rf "$dir/out-live"
-  rebase_manifest "$dir/post-manifest.json" "$good" "$dir"
-  jq --arg sandbox "$dir/sandbox-gone-kept" '.sandboxPath = $sandbox | .isolation.sessionCountAfter = 101' \
-    "$dir/post-manifest.json" > "$dir/post-manifest.json.tmp"
-  mv "$dir/post-manifest.json.tmp" "$dir/post-manifest.json"
-  start_stub "$dir" || { oqa_st_fail "L-15 broken: stub did not start"; return 1; }
+  # 3b. L-08 full-strength PASS case: the sisyphus first line present in the
+  # first fake model request turns the partial verdict into PASS.
+  local dir="$TMP/case-L-08-full"
+  cp -r "$good" "$dir"; rm -rf "$dir/out-live" "$dir/out"
+  rebase_case "$dir" "$good" "$dir"
+  local sisyphus_line
+  sisyphus_line="$(oqa_st_sisyphus_first_line)"
+  jq -c --arg line "$sisyphus_line" '.input[0].content = $line' \
+    "$dir/req-a/requests.jsonl" > "$dir/req.jsonl.tmp" && mv "$dir/req.jsonl.tmp" "$dir/req-a/requests.jsonl"
+  start_stub "$dir" || { oqa_st_fail "L-08 full: stub did not start"; return 1; }
+  run_runner "$dir" "$dir/manifest.json" "$dir/out" || true
+  expect_row "$dir/out/results.json" "L-08" "true" "L-08 full-strength"
+
+  broken_case "L-09" "read-tag-missing" \
+    "oqa_st_write_ctx_b_notag '$TMP/case-L-09-read-tag-missing'"
+  broken_case "L-09" "guard-text-missing" \
+    "oqa_st_write_ctx_c_plain '$TMP/case-L-09-guard-text-missing'"
+  broken_case "L-09" "file-content-leak" \
+    "oqa_st_write_ctx_c_leak '$TMP/case-L-09-file-content-leak'"
+  broken_case "L-11" "stats-line-missing" \
+    "oqa_st_del_stats_lines '$TMP/case-L-11-stats-line-missing/serve.out'" 1
+  broken_case "L-11" "translated-zero" \
+    "oqa_st_set_stats '$TMP/case-L-11-translated-zero/serve.out' '$TMP/case-L-11-translated-zero/proj-a' 42 0 10 2 11 0" 1
+  broken_case "L-20" "activation-over-budget" \
+    "jq '.pluginFirstSeenEpochMs = .serverStartEpochMs + 61000' '$TMP/case-L-20-activation-over-budget/manifest.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-20-activation-over-budget/manifest.json'"
+  broken_case "L-21" "host-unsupported" \
+    "printf '%s\n' '[opencode-v2] host unsupported floor 2.3.9' >> '$TMP/case-L-21-host-unsupported/serve.out'"
+  broken_case "L-22" "engine-count-mismatch" \
+    "sed -i '0,/engine started/{/engine started/d}' '$TMP/case-L-22-engine-count-mismatch/serve.out'"
+  broken_case "L-24" "no-fetch-worthy" \
+    "grep -v -E 'tool.called|step.started' '$TMP/case-L-24-no-fetch-worthy/events-b.sse' > '$TMP/x.sse' && mv '$TMP/x.sse' '$TMP/case-L-24-no-fetch-worthy/events-b.sse'"
+  broken_case "L-24" "stats-line-missing" \
+    "oqa_st_del_stats_lines '$TMP/case-L-24-stats-line-missing/serve.out'" 1
+  broken_case "L-24" "bound-violated" \
+    "oqa_st_set_stats '$TMP/case-L-24-bound-violated/serve.out' '$TMP/case-L-24-bound-violated/proj-a' 42 40 10 2 999 0" 1
+
+  # 4. L-15 broken post phases: sandbox still exists, and a real leak row.
+  local dir="$TMP/case-L-15-sandbox"
+  cp -r "$good" "$dir"; rm -rf "$dir/out-live" "$dir/out"
+  rebase_case "$dir" "$good" "$dir"
+  jq --arg sandbox "$dir/sandbox-gone-kept" '.sandboxPath = $sandbox' \
+    "$dir/post-manifest.json" > "$dir/pm.tmp" && mv "$dir/pm.tmp" "$dir/post-manifest.json"
+  start_stub "$dir" || { oqa_st_fail "L-15 sandbox: stub did not start"; return 1; }
   run_runner "$dir" "$dir/post-manifest.json" "$dir/out" "--post" || true
-  expect_row "$dir/out/results.json" "L-15" "false" "broken post"
+  expect_row "$dir/out/results.json" "L-15" "false" "L-15 sandbox still exists"
+
+  dir="$TMP/case-L-15-leak"
+  cp -r "$good" "$dir"; rm -rf "$dir/out-live" "$dir/out"
+  rebase_case "$dir" "$good" "$dir"
+  jq --arg d "$dir/sandbox-gone/leaked-session" '.isolation.leakedSessionDirectories = [$d]' \
+    "$dir/post-manifest.json" > "$dir/pm.tmp" && mv "$dir/pm.tmp" "$dir/post-manifest.json"
+  start_stub "$dir" || { oqa_st_fail "L-15 leak: stub did not start"; return 1; }
+  run_runner "$dir" "$dir/post-manifest.json" "$dir/out" "--post" || true
+  expect_row "$dir/out/results.json" "L-15" "false" "L-15 real leak row"
 
   # 5. L-22 process-wide stream: STOP verdict
-  local dir="$TMP/case-L-22-stop"
-  cp -r "$good" "$dir"
-  rm -rf "$dir/out-live"
-  rebase_manifest "$dir/manifest.json" "$good" "$dir"
+  dir="$TMP/case-L-22-stop"
+  cp -r "$good" "$dir"; rm -rf "$dir/out-live" "$dir/out"
+  rebase_case "$dir" "$good" "$dir"
   printf '%s\n' "[opencode-v2] [v2-events] session.renamed merged the title of ses_stub_locb into the session info registry" >> "$dir/serve.out"
   start_stub "$dir" || { oqa_st_fail "L-22 stop: stub did not start"; return 1; }
   run_runner "$dir" "$dir/manifest.json" "$dir/out" || true
   expect_row "$dir/out/results.json" "L-22" "stop" "process-wide stream"
+
+  # 6. driver-level tests: verdict table, strict gate, L-18 verdict, bun guard
+  driver_tests "$good"
 
   if [ "$FAILS" -eq 0 ]; then
     oqa_st_pass "v2-parity-live self-test"
@@ -285,6 +391,116 @@ main() {
   fi
   oqa_st_fail "v2-parity-live self-test had $FAILS failure(s)"
   return 1
+}
+
+# Driver tests: source v2-parity-live.sh in import mode (no OC2 dependency,
+# no trap overwrite) and exercise the verdict/strict/L-18/bun-guard logic.
+# The driver shares the FAILS counter with this shell, so the driver tests
+# track their own counter and the shared FAILS is restored afterwards.
+driver_tests() {
+  local good="$1" self_fails=$FAILS driver_fails=0 out rc
+  bad() { printf 'FAIL: %s\n' "$*" >&2; driver_fails=$((driver_fails + 1)); }
+  FAILS=0
+  OQA_PL_IMPORT_FOR_TEST=1 . "$SCRIPT_DIR/../v2-parity-live.sh"
+
+  # 6a. truthful final line: open rows present -> no "every executed live
+  # row passed" claim; every open row of wave <= N named with its owner.
+  mkdir -p "$TMP/dt"
+  jq -n '[{"row":"L-01","wave":2,"pass":true,"summary":"x"},
+           {"row":"L-08","wave":2,"pass":"partial","owner":"agent registration, plan task 24; re-proven by IS-5","summary":"x"},
+           {"row":"L-18","wave":2,"pass":"pending","owner":"v2-v1-regression.sh (stays pending with --skip-v1)","summary":"x"},
+           {"row":"L-22","wave":2,"pass":"stop","owner":"per-location event stream isolation (recorded limit; re-proven when the isolation lands)","summary":"x"},
+           {"row":"L-03","wave":3,"pass":"pending","owner":"agent registration lands with plan task 24 (wave 3)","summary":"x"}]' \
+    > "$TMP/dt/results.json"
+  EV_LIVE="$TMP/dt" WAVE=2 STRICT=0
+  out="$(oqa_pl_print_table)"; rc=$?
+  open="$(printf '%s' "$out" | grep '^OPEN ROWS REMAIN' || true)"
+  if [ "$rc" -eq 0 ] && printf '%s' "$open" | grep -qF 'OPEN ROWS REMAIN (wave <= 2)' \
+     && printf '%s' "$out" | grep -qF 'partial L-08 owner: agent registration, plan task 24' \
+     && printf '%s' "$out" | grep -qF 'pending L-18 owner: v2-v1-regression.sh' \
+     && printf '%s' "$out" | grep -qF 'stop L-22 owner: per-location event stream isolation' \
+     && ! printf '%s' "$open" | grep -qF 'L-03' \
+     && ! printf '%s' "$out" | grep -qF 'every executed live row passed'; then
+    oqa_st_pass "driver: final line names open rows with owners and never claims all passed"
+  else
+    bad "driver: final line wrong for the open-rows table (rc=$rc)"; driver_fails=$((driver_fails + 1))
+  fi
+
+  # 6b. truthful final line: no open rows -> the all-passed claim.
+  jq -n '[{"row":"L-01","wave":2,"pass":true,"summary":"x"},{"row":"L-24","wave":2,"pass":true,"summary":"x"}]' \
+    > "$TMP/dt/results.json"
+  out="$(oqa_pl_print_table)"; rc=$?
+  if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qF 'PASS: every executed live row passed'; then
+    oqa_st_pass "driver: clean table prints the every-row-passed claim"
+  else
+    bad "driver: clean table missing the every-row-passed claim (rc=$rc)"; driver_fails=$((driver_fails + 1))
+  fi
+
+  # 6c. strict gate: open wave<=N rows fail under --strict only.
+  jq -n '[{"row":"L-08","wave":2,"pass":"partial","owner":"o","summary":"x"}]' > "$TMP/dt/results.json"
+  EV_LIVE="$TMP/dt" WAVE=2 STRICT=1
+  if oqa_pl_strict_gate; then
+    bad "driver: strict gate passed despite an open wave-2 row"; driver_fails=$((driver_fails + 1))
+  else
+    oqa_st_pass "driver: strict gate fails on an open wave-2 row"
+  fi
+  STRICT=0
+  if oqa_pl_strict_gate; then
+    oqa_st_pass "driver: non-strict gate tolerates open rows"
+  else
+    bad "driver: non-strict gate failed on open rows"; driver_fails=$((driver_fails + 1))
+  fi
+  jq -n '[{"row":"L-08","wave":2,"pass":true,"summary":"x"}]' > "$TMP/dt/results.json"
+  STRICT=1
+  if oqa_pl_strict_gate; then
+    oqa_st_pass "driver: strict gate passes with no open rows"
+  else
+    bad "driver: strict gate failed on a clean table"; driver_fails=$((driver_fails + 1))
+  fi
+
+  # 6d. L-18 verdict write-back into results.json.
+  mkdir -p "$TMP/dt2"
+  jq -n '[{"row":"L-18","wave":2,"pass":"pending","owner":"v2-v1-regression.sh","summary":"pending","evidence":"e"}]' \
+    > "$TMP/dt2/results.json"
+  printf 'PASS: tui\nL-18 PASS: V1 regression on system OpenCode (agents ok, tools ok, v2 marker absent, tui ok)\n' > "$TMP/dt2/v1-regression.out"
+  EV_LIVE="$TMP/dt2" oqa_pl_apply_v1_verdict "$TMP/dt2/v1-regression.out"
+  if [ "$(jq -r '.[] | select(.row == "L-18") | .pass' "$TMP/dt2/results.json")" = "true" ] \
+     && [ "$(jq -r '.[] | select(.row == "L-18") | .evidence' "$TMP/dt2/results.json")" = "$TMP/dt2/v1-regression.out" ]; then
+    oqa_st_pass "driver: L-18 PASS verdict written into results.json"
+  else
+    bad "driver: L-18 PASS verdict not applied"; driver_fails=$((driver_fails + 1))
+  fi
+  printf 'L-18 FAIL: V1 regression on system OpenCode (agents DRIFTED, tools ok, v2 marker absent, tui ok)\n' > "$TMP/dt2/v1-regression.out"
+  EV_LIVE="$TMP/dt2" oqa_pl_apply_v1_verdict "$TMP/dt2/v1-regression.out"
+  if [ "$(jq -r '.[] | select(.row == "L-18") | .pass' "$TMP/dt2/results.json")" = "false" ]; then
+    oqa_st_pass "driver: L-18 FAIL verdict written into results.json"
+  else
+    bad "driver: L-18 FAIL verdict not applied"; driver_fails=$((driver_fails + 1))
+  fi
+
+  # 6e. bun/ junk guard: FAIL only when bun/ appeared and was absent before.
+  mkdir -p "$TMP/dtrepo"
+  REPO_ROOT="$TMP/dtrepo" REPO_BUN_DIR_BEFORE="0"
+  if oqa_pl_bun_junk_check; then
+    oqa_st_pass "driver: no bun/ junk when the directory is absent"
+  else
+    bad "driver: bun guard tripped without junk"; driver_fails=$((driver_fails + 1))
+  fi
+  mkdir -p "$TMP/dtrepo/bun"
+  if oqa_pl_bun_junk_check > /dev/null 2>&1; then
+    oqa_st_fail "driver: bun guard missed the appeared bun/ directory"; driver_fails=$((driver_fails + 1))
+  else
+    oqa_st_pass "driver: bun guard FAILs when bun/ appeared during the run"
+  fi
+  REPO_BUN_DIR_BEFORE="1"
+  if oqa_pl_bun_junk_check; then
+    oqa_st_pass "driver: pre-existing bun/ does not trip the guard"
+  else
+    bad "driver: bun guard tripped on a pre-existing bun/"; driver_fails=$((driver_fails + 1))
+  fi
+  REPO_ROOT="$(cd "$SCRIPT_DIR/../../../../.." && pwd)"
+
+  FAILS=$((self_fails + driver_fails))
 }
 
 main
