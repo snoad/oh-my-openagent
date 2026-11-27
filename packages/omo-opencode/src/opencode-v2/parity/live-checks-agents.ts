@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs"
 
+import { orderProblems } from "./live-checks-agents-order"
+
 import {
   fail,
   pass,
@@ -19,10 +21,11 @@ import {
 // against fixtures/v1-baseline/agent-prompts.json, and the default agent
 // through scenario A's fake model request (the developer content carries the
 // sisyphus system first line). The list ORDER relative to the V1 baseline is
-// a recorded limit (LIM-13: the host lists agents in insertion order, plugin
-// registrations append after the pre-existing host agents), so the order
-// assertion is the canonical order of the registered omo ids: the four
-// primaries lead in order, the subagents follow.
+// a recorded limit (LIM-13: the host lists agents in insertion order and the
+// editor offers no reorder), so the order assertion holds exactly what the
+// host guarantees: the default agent leads, the omo ids keep their canonical
+// order among themselves, and the pre-existing host ids keep their
+// before-capture relative order (LIM-13 in v2-limits.ts carries the evidence).
 
 type BaselineRow = { id: string; name: string; mode: string; hidden: unknown }
 type CapturedAgent = {
@@ -38,8 +41,6 @@ type AgentsManifest = {
   readonly agentsAfterFile?: string
   readonly hotAgentId?: string
 }
-
-const PRIMARY_ORDER = ["sisyphus", "hephaestus", "prometheus", "atlas"] as const
 
 function readJson(path: string): unknown {
   try {
@@ -115,13 +116,6 @@ function captureProblems(
   return problems
 }
 
-function orderProblem(ids: ReadonlyArray<string>): string | undefined {
-  const positions = PRIMARY_ORDER.map((primary) => ids.indexOf(primary))
-  if (positions.some((position) => position < 0)) return "a canonical primary agent is missing from the list order"
-  const sorted = [...positions].every((position, index) => index === 0 || position > positions[index - 1])
-  return sorted ? undefined : `the four primaries are not in canonical order: ${positions.join(",")}`
-}
-
 function escapedFirstLine(prompt: string): string {
   const firstLine = prompt.split("\n")[0] ?? ""
   return JSON.stringify(firstLine).slice(1, -1)
@@ -166,8 +160,12 @@ export const checkAgents: LiveCheck = async (ctx) => {
   const idsInOrder = envelopeData(afterBody)
     .map((agent) => agent.id)
     .filter((id): id is string => typeof id === "string")
-  const order = orderProblem(idsInOrder)
-  if (order !== undefined) problems.push(`after: ${order}`)
+  const beforeIdsInOrder = envelopeData(beforeBody)
+    .map((agent) => agent.id)
+    .filter((id): id is string => typeof id === "string")
+  const orderProblemsFound = orderProblems(beforeIdsInOrder, idsInOrder)
+  problems.push(...orderProblemsFound.map((problem) => `after: ${problem}`))
+  const order = orderProblemsFound.length === 0 ? undefined : orderProblemsFound.join("; ")
   const scenario = scenarioOr(ctx, "a")
   const sisyphusPrompt = prompts["sisyphus"] ?? ""
   const bodies = scenario === undefined ? [] : readRequestBodies(scenario.requestsFile)

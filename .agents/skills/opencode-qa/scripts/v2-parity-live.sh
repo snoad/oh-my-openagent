@@ -400,13 +400,16 @@ oqa_pl_main() {
 
   oqa_pl_capture_real_env
   oqa_v2_mk_sandbox || return 1
-  # The unified omo user config turns hashline on and disables one non-default
-  # plugin tool (look_at) for live row L-16; both ride the LITERAL bracketed
-  # "[opencode]" harness block; top-level and unbracketed "opencode" spellings
-  # are rejected by the config-migration validation (observed on 2.4.1).
+  # The unified omo user config turns hashline on, disables one non-default
+  # plugin tool (look_at) for live row L-16, and pins the atlas model exactly
+  # like the V1 baseline capture does (v2-v1-baseline.sh writes the same
+  # agents.atlas.model override; without it the atlas prompt resolves a
+  # different model and the L-03 byte-equality row fails on the sandbox, not
+  # the product). Config keys ride the unified omo config; the
+  # "[opencode]" bracketed harness block carries the plugin harness keys.
   local omo_cfg="$OQA_V2_SANDBOX/home/.omo/omo.jsonc"
   mkdir -p "$(dirname "$omo_cfg")"
-  printf '%s\n' '{ "[opencode]": { "hashline_edit": true, "disabled_tools": ["look_at"] } }' > "$omo_cfg"
+  printf '%s\n' '{ "agents": { "atlas": { "model": "anthropic/claude-sonnet-5" } }, "[opencode]": { "hashline_edit": true, "disabled_tools": ["look_at"] } }' > "$omo_cfg"
   oqa_pl_log "sandbox omo config written: $omo_cfg"
   local plugin_dir cfg_dir cfg_body
   plugin_dir="${OQA_V2_PLUGIN_DIR:-$REPO_ROOT}"
@@ -556,6 +559,23 @@ JSON
     oqa_pl_log "live runner reported failures (rc=$live_rc); continuing to teardown for the evidence"
   fi
 
+  # Persist the raw scenario captures the row checks read, so a failing row
+  # can be diffed offline after the work dir and sandbox are gone: the session
+  # contexts for the scenarios already driven and the agent before/after
+  # captures. Scenarios d/e land in the post phase; their context captures
+  # are re-run there once their session ids exist.
+  local ctx_key ctx_sid
+  for ctx_key in a b c; do
+    eval "ctx_sid=\"\$sid_${ctx_key}\""
+    [ -n "$ctx_sid" ] && oqa_v2_api GET "/api/session/$ctx_sid/context" \
+      > "$EV_LIVE/context-$ctx_key.json" 2>/dev/null || true
+  done
+  cp "$WORK_DIR/agents-before.json" "$EV_LIVE/agents-before.json" 2>/dev/null || true
+  cp "$WORK_DIR/agents-after.json" "$EV_LIVE/agents-after.json" 2>/dev/null || true
+  for ctx_key in a b c; do
+    cp "$WORK_DIR/req-$ctx_key/requests.jsonl" "$EV_LIVE/requests-$ctx_key.jsonl" 2>/dev/null || true
+  done
+
   # ---- plugin reload for the stats lines, then the host-config-change ----
   # captures (L-10, L-16): after the reload the plugin is active again with a
   # fresh registration; scenario d drives the scripted grep tool call and
@@ -588,6 +608,14 @@ JSON
   cp "$OQA_V2_SANDBOX/serve.out" "$EV_LIVE/serve.out" 2>/dev/null || true
   cp "$(oqa_v2_log_path)/opencode.log" "$EV_LIVE/host-opencode.log" 2>/dev/null || true
   cp "$TMPDIR/oh-my-opencode.log" "$EV_LIVE/plugin-file.log" 2>/dev/null || true
+  # Post-phase scenario contexts (d and e) once their session ids exist.
+  for ctx_key in d e; do
+    eval "ctx_sid=\"\$sid_${ctx_key}\""
+    [ -n "$ctx_sid" ] && oqa_v2_api GET "/api/session/$ctx_sid/context" \
+      > "$EV_LIVE/context-$ctx_key.json" 2>/dev/null || true
+  done
+  cp "$WORK_DIR/req-d/requests.jsonl" "$EV_LIVE/requests-d.jsonl" 2>/dev/null || true
+  cp "$WORK_DIR/req-e/requests.jsonl" "$EV_LIVE/requests-e.jsonl" 2>/dev/null || true
 
   local sandbox_path="$OQA_V2_SANDBOX"
   oqa_v2_rm_sandbox

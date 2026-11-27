@@ -57,9 +57,12 @@ export function diffConfigs(base: V1ConfigProjection, working: V1WorkingConfig):
   const defaultChanged = base.default_agent !== workingDefaultAgent
   const modelChanged = base.model !== working.model
   return {
-    agents: diffSection(
+    agents: withV1AgentNames(
       asRecord(base.agent) as Record<string, PlanAgentConfig>,
-      asRecord(working.agent) as Record<string, PlanAgentConfig>,
+      diffSection(
+        asRecord(base.agent) as Record<string, PlanAgentConfig>,
+        asRecord(working.agent) as Record<string, PlanAgentConfig>,
+      ),
     ),
     ...(defaultChanged && workingDefaultAgent !== undefined ? { defaultAgent: workingDefaultAgent } : {}),
     tools: asRecord(working.tools) as Record<string, boolean>,
@@ -82,4 +85,38 @@ export function diffConfigs(base: V1ConfigProjection, working: V1WorkingConfig):
 // last applied plan.
 export function noopPlanOf(base: V1ConfigProjection): RegistrationPlan {
   return diffConfigs(base, base)
+}
+
+// The V1 host names its own agents by their config key (v1-baseline/agents.json:
+// build, compaction, general, librarian, multimodal-looker, oracle, plan,
+// summary, title, explore); the OpenCode 2 host names them display-style
+// (Build, Compaction, General, ...) and the base projection carries no name,
+// so EVERY unchanged base-backed agent enters the modified section as a
+// name_only entry whose name is the canonical id. The registration rewrites
+// the name and leaves every other field host-owned. Entries the pipeline
+// actually changed keep their full working value.
+function withV1AgentNames(
+  base: Record<string, PlanAgentConfig>,
+  section: PlanSection<PlanAgentConfig>,
+): PlanSection<PlanAgentConfig> {
+  const added: Record<string, PlanAgentConfig> = {}
+  const modified: Record<string, PlanAgentConfig> = {}
+  for (const [key, value] of Object.entries(section.added)) {
+    const id = (key.split(" - ")[0] ?? key).toLowerCase()
+    if (id in base) {
+      modified[key] = { ...value, name: id }
+      continue
+    }
+    added[key] = value
+  }
+  for (const [key, value] of Object.entries(section.modified)) {
+    const id = (key.split(" - ")[0] ?? key).toLowerCase()
+    modified[key] = { ...value, name: id }
+  }
+  for (const [key, value] of Object.entries(base)) {
+    if (key in modified || key in added) continue
+    const id = (key.split(" - ")[0] ?? key).toLowerCase()
+    modified[key] = { ...value, name: id, name_only: true }
+  }
+  return { added, modified, removed: section.removed }
 }

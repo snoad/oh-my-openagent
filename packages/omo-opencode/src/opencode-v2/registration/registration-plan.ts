@@ -12,6 +12,7 @@ export type PlanAgentConfig = {
   readonly hidden?: boolean
   readonly tools?: Readonly<Record<string, boolean>>
   readonly permission?: Readonly<Record<string, unknown>>
+  readonly name_only?: boolean
   readonly [key: string]: unknown
 }
 

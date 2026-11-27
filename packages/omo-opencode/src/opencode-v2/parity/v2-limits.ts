@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs"
+
 import type { IsRow } from "./rows"
 
 export type V2Limit = {
@@ -91,9 +93,16 @@ export const V2_LIMITS: V2Limit[] = [
   },
   {
     id: "LIM-13",
-    status: "candidate",
+    status: "confirmed",
     is: ["IS-2", "IS-13"],
-    reason: "agent list order",
+    reason:
+      "agent list order: the host lists agents in insertion order (default agent first, then the pre-existing host agents, plugin registrations interleaved by editor update re-insertion), so GET /api/agent order never equals the V1 baseline order; the L-03 order assertion holds the reduced guarantee (default agent leads, omo ids in canonical order, host ids keep their before-capture relative order) instead (live evidence 20261127 task-28/live: captured order sisyphus,build,general,explore,compaction,title,summary,plan,hephaestus,prometheus,atlas,librarian,metis,momus,multimodal-looker,oracle,sisyphus-junior). apiEvidence: promise/agent.d.ts L5-L11 declares the AgentEditor surface list/get/default/update/remove only; update on a missing id inserts at the end and there is no reorder or insert-at operation, so a registration cannot impose the V1 list order without removing and re-adding host agents (evidence attached by task 24)",
+    apiEvidence: "promise/agent.d.ts#L5-L11",
+    gracefulCheck: () => {
+      if (!existsSync(`${import.meta.dir}/fixtures/v1-baseline/agents.json`)) {
+        throw new Error("LIM-13: the reduced order guarantee is defined against the v1-baseline agents fixture")
+      }
+    },
   },
   {
     id: "LIM-14",

@@ -41,7 +41,10 @@ function recordPristineAgents(
 // write per canonical id wins, which drops the hidden config-key aliases and
 // keeps one visible V2 agent per id), removes the removed ids, applies the
 // plan default. Returns the written ids so the runtime can keep the recorded
-// base pristine on later replays.
+// base pristine on later replays. The plan's modified entries already carry
+// the V1 key names (plan-diff withV1AgentNames); name_only entries rewrite
+// only the name so a host agent the pipeline never edited keeps its own
+// fields.
 function replayAgentPlan(editor: AgentReplayEditor, plan: RegistrationPlan): ReadonlySet<string> {
   const written = new Set<string>()
   const upserts: ReadonlyArray<readonly [string, PlanAgentConfig]> = [

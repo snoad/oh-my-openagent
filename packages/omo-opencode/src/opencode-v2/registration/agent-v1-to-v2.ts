@@ -66,8 +66,14 @@ function permissionRulesOfMap(map: Readonly<Record<string, unknown>>, rules: Age
 }
 
 // The V2 item's permissions ruleset: the V1 permission map first, then the
-// V1 tools map (enabled renders allow, disabled renders deny; the V2 ruleset
-// has no separate per-agent tool visibility field).
+// V1 tools map (enabled renders allow, disabled renders deny), then the
+// V1 default-allow fallback. The V1 host allows every tool an agent's maps
+// leave unlisted; the OpenCode 2 host falls back to ask for unmatched actions
+// (live evidence: scenario B's read call rejected with permission.rejected
+// under the registered sisyphus ruleset, and the plugin tools vanished from
+// the model request), so the ruleset ends with a wildcard allow that explicit
+// rules keep precedence over through the host's ordered first-match
+// evaluation.
 function permissionRulesOfV1Agent(entry: PlanAgentConfig): ReadonlyArray<AgentReplayPermissionRule> {
   const rules: AgentReplayPermissionRule[] = []
   if (typeof entry.permission === "object" && entry.permission !== null) {
@@ -83,14 +89,20 @@ function permissionRulesOfV1Agent(entry: PlanAgentConfig): ReadonlyArray<AgentRe
     permissionRulesOfMap(enabled, rules)
     permissionRulesOfMap(disabled, rules)
   }
+  rules.push({ action: "*", resource: "*", effect: "allow" })
   return rules
 }
 
 // Mutates the editor item in place, exactly the fields the V1 pipeline
 // produced and the V2 schema carries; the host-owned request settings are
-// left untouched.
+// left untouched. A name_only entry (the plan-diff promotion of an unchanged
+// host agent whose V2 display name differs from the V1 key name) rewrites
+// ONLY the name: the agent's other fields stay host-owned, so the lossy
+// V1-permission round-trip never touches a host agent the pipeline did not
+// edit.
 export function assignAgentItem(item: AgentReplayItem, key: string, entry: PlanAgentConfig): void {
   item.name = typeof entry.name === "string" && entry.name !== "" ? entry.name : key
+  if (entry.name_only === true) return
   item.mode = agentModeOfV1(typeof entry.mode === "string" ? entry.mode : undefined)
   item.hidden = entry.hidden === true
   const model = modelRefOfV1(entry.model)

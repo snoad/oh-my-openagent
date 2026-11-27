@@ -99,6 +99,35 @@ describe("agent registration over the real engine", () => {
       expect(sisyphus?.name).toBe(sisyphusKey)
       expect(sisyphus?.system).toBe(sisyphusEntry?.prompt)
       expect(sisyphus?.permissions?.length ?? 0).toBeGreaterThan(0)
+      const rules = sisyphus?.permissions ?? []
+      const last = rules.at(-1)
+      expect(last, "the V1 default-allow fallback closes the ruleset").toEqual({
+        action: "*",
+        resource: "*",
+        effect: "allow",
+      })
+      expect(rules.slice(0, -1).some((rule) => rule.effect === "deny" || rule.effect === "allow")).toBe(true)
+    } finally {
+      await booted.runtime.stop()
+      releaseAllPromptAsyncReservationsForTesting()
+    }
+  })
+
+  it("#given an unchanged host agent with a V2 display name #when the plan is built and replayed #then the name lands as the V1 key and the other fields stay host-owned", async () => {
+    // given
+    const booted = await bootRegistered()
+    try {
+      const compactionKey = Object.keys(booted.plan.agents.modified).find((key) => canonical(key) === "compaction")
+      expect(compactionKey, "the compaction agent carries a plan entry").toBeDefined()
+
+      // when
+      const list = (await booted.ctx.agent.list()).data
+      const compaction = list.find((agent) => agent.id === "compaction")
+
+      // then: the name is the V1 key and the host-owned fields survive untouched
+      expect(compaction?.name).toBe("compaction")
+      expect(compaction?.mode).toBe("primary")
+      expect(compaction?.hidden).toBe(true)
     } finally {
       await booted.runtime.stop()
       releaseAllPromptAsyncReservationsForTesting()
