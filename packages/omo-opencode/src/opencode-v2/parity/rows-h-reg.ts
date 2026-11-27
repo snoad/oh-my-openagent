@@ -5,6 +5,7 @@ import { hRegProviderModelRows } from "./rows-h-reg-provider-model"
 import { hRegSnapshotRows } from "./rows-h-reg-snapshot"
 import { hRegToolGatedRows } from "./rows-h-reg-tools-gated"
 import { hRegToolRows } from "./rows-h-reg-tools"
+import { hRegTodoRows } from "./rows-h-reg-todo"
 import type { ParityRow } from "./rows"
 
 // Group index for the wave-3 registration rows: rows.ts carries exactly ONE
@@ -19,5 +20,6 @@ export const hRegWaveRows: ParityRow[] = [
   ...hHookConfigRows,
   ...hRegToolRows,
   ...hRegToolGatedRows,
+  ...hRegTodoRows,
   ...hRegProviderModelRows,
 ]

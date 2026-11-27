@@ -1,4 +1,6 @@
 import { existsSync, readFileSync } from "node:fs"
+import { createRequire } from "node:module"
+import { join } from "node:path"
 
 import type { IsRow } from "./rows"
 
@@ -80,10 +82,17 @@ export const V2_LIMITS: V2Limit[] = [
   },
   {
     id: "LIM-11",
-    status: "candidate",
+    status: "confirmed",
     is: ["IS-8", "IS-13"],
-    reason:
-      "todos provided by the plugin instead of the host: experimental.todo is off by default, so host todo surfaces do not show them",
+    reason: "todos live in plugin session metadata, so host todo surfaces do not show them (task 29)",
+    apiEvidence: "promise/session.d.ts#L214",
+    gracefulCheck: () => {
+      const resolve = createRequire(import.meta.url).resolve("@opencode/plugin/package.json")
+      const declaration = readFileSync(join(resolve, "..", "dist", "promise", "session.d.ts"), "utf8")
+      if (!declaration.includes('Pick<SessionApi, "list" | "create" | "get"')) throw new Error("LIM-11: evidence moved")
+      const domainHead = declaration.slice(0, declaration.indexOf("export type SessionDomain"))
+      if (domainHead.includes("todo")) throw new Error("LIM-11: the session API grew a todo accessor")
+    },
   },
   {
     id: "LIM-12",

@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test"
 
 import type { SessionMessageInfo } from "@opencode/client"
 import { createFakeV2Context, type FakeV2Context } from "../parity/fake-v2-context"
+import { writeSessionTodos } from "../registration/todo-store"
 import { createV2ClientShim } from "./v2-client-shim"
 
 // Contract tests for the OpenCode 2 backed V1 client shim session domain: one
@@ -342,7 +343,7 @@ describe("v2 client shim session lifecycle methods", () => {
     expect(result.data[0]?.parentID).toBe(parentID)
   })
 
-  it("#given any session #when session.todo is called #then the empty V1 todo list is returned", async () => {
+  it("#given a session without stored todos #when session.todo is called #then the empty V1 todo list is returned", async () => {
     // given
     const { shim } = setup()
     const sessionID = await createSession(shim)
@@ -352,5 +353,21 @@ describe("v2 client shim session lifecycle methods", () => {
 
     // then
     expect(result.data).toEqual([])
+  })
+
+  it("#given todos stored through the plugin store #when session.todo is called #then the stored V1 todo list is served", async () => {
+    // given
+    const { ctx, shim } = setup()
+    const sessionID = await createSession(shim)
+    const stored = await writeSessionTodos(ctx, sessionID, [
+      { content: "wire the store", status: "in_progress", priority: "high" },
+      { content: "ship it", status: "pending", priority: "low" },
+    ])
+
+    // when
+    const result = await shim.session.todo({ path: { id: sessionID } })
+
+    // then
+    expect(result.data).toEqual(stored)
   })
 })

@@ -12,6 +12,7 @@ import { registerIdleContinuationAdapter } from "../hooks/adapt-idle-continuatio
 import { createPlanSource } from "../registration/plan-source"
 import type { PlanSourceContext } from "../registration/plan-source-context"
 import { v2ToolRegistrationAdapter } from "./adapt-tool-registration"
+import { v2TodoAdapter } from "./adapt-todo-registration"
 import { v2AgentRegistrationAdapter } from "./adapter-agent-registration"
 import { v2ProviderModelAdapterRegistration } from "./provider-model-adapter"
 import { markHook } from "./hook-markers"
@@ -157,6 +158,7 @@ export const v2AdapterRegistrations: readonly V2AdapterRegistration[] = [
   v2IdleContinuationAdapterRegistration,
   v2PlanSourceAdapterRegistration,
   v2ProviderModelAdapterRegistration,
+  v2TodoAdapter,
   v2ToolRegistrationAdapter,
   v2AgentRegistrationAdapter,
 ]
