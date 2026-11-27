@@ -88,6 +88,7 @@ export const checkToolRegistrationParity: LiveCheck = async (ctx) => {
   const baselineMissing: string[] = []
   const configDisabled: string[] = []
   const schemaDrift: string[] = []
+  const limitCovered: string[] = []
   const schemaKeySeen = [...requestTools.values()].some((tool) => tool.parameters !== undefined)
     ? "parameters"
     : "input_schema"
@@ -102,6 +103,12 @@ export const checkToolRegistrationParity: LiveCheck = async (ctx) => {
       if (envDependent.has(entry.id)) continue
       if (disabledByConfig.has(entry.id)) {
         configDisabled.push(entry.id)
+        continue
+      }
+      if (entry.id === "edit") {
+        // The host reserves the tool name edit (LIM-22): the entry is editor
+        // accepted but never listed. Reported as limit-covered, never silent.
+        limitCovered.push(entry.id)
         continue
       }
       baselineMissing.push(entry.id)
@@ -121,6 +128,7 @@ export const checkToolRegistrationParity: LiveCheck = async (ctx) => {
     `removed by the sandbox omo.json disabled_tools (reported, not failing): ${configDisabled.length === 0 ? "none" : configDisabled.join(",")}`,
     `lsp_* names not yet registered (task 26 owns them via the lsp MCP; reported, not failing): ${lspMissing.length === 0 ? "none" : lspMissing.join(",")}`,
     `JSON Schema drift: ${schemaDrift.length === 0 ? "none" : schemaDrift.join(",")}`,
+    `edit not listed in the request: covered by LIM-22 (the host reserves the tool name edit; live-only, the hermetic edit-family rows keep proving the codec): ${limitCovered.join(",") || "none"}`,
     `request tools outside the baseline (V2 host builtins): ${extraPluginNames.join(",") || "none"}`,
     "host-only V1 names compared by role not by name (bash vs shell, read, write, question, todowrite, webfetch); invalid is host-internal.",
     "",

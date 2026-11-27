@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 
 import type { IsRow } from "./rows"
 
@@ -152,6 +152,19 @@ export const V2_LIMITS: V2Limit[] = [
     is: ["IS-5", "IS-13"],
     reason:
       "V1 provider model entries the OpenCode 2 model schema cannot express: the V1 per-model cost object and the per-model provider.npm override have no OpenCode 2 model-info counterpart, so catalog entries register without them and entries that carry none of the expressible fields (name, limit, modalities, tool_call, temperature, options, headers) are skipped with one log line naming the entry (task 28)",
+  },
+  {
+    id: "LIM-22",
+    status: "confirmed",
+    is: ["IS-4", "IS-13"],
+    reason:
+      "the OpenCode 2 host reserves the tool NAME edit: a plugin tool named edit is accepted into the editor but never listed in the model request and execution answers 'No tool named \"edit\" is currently available' (offline probe plugin 20261127: the same union/null-heavy args schema under another name registers, lists and executes, so the schema is not the factor). Live-only reservation: the hermetic H-REG edit-family rows keep proving the codec and the transform against the fixture-backed fake ctx. The plugin keeps the V1 name (it does not rename the tool and does not shadow patch); live row L-04 reports edit as covered by this limit",
+    apiEvidence: "promise/tool.d.ts#L28-L50",
+    gracefulCheck: () => {
+      if (!existsSync(`${import.meta.dir}/fixtures/v1-baseline/tools.json`)) {
+        throw new Error("LIM-22: the covered edit entry is defined against the v1-baseline tools fixture")
+      }
+    },
   },
   {
     id: "VL-1",

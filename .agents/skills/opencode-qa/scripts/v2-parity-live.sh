@@ -601,7 +601,7 @@ JSON
     kill -0 "$OQA_V2_SERVER_PID" 2>/dev/null || break
     sleep 1
   done
-  printf '%s\n' "{\"steps\":[{\"tool_call\":{\"name\":\"grep\",\"arguments\":{\"pattern\":\"parity\",\"path\":\"$PROJ_DIR\"}}},{\"text\":\"OQA_D_FINAL done grepping\"}]}" > "$WORK_DIR/scenario-d.json"
+  printf '%s\n' "{\"steps\":[{\"tool_call\":{\"name\":\"grep\",\"arguments\":{\"pattern\":\"parity\",\"path\":\"$PROJ_DIR\",\"output_mode\":\"content\"}}},{\"text\":\"OQA_D_FINAL done grepping\"}]}" > "$WORK_DIR/scenario-d.json"
   printf '%s\n' '{"steps":[{"text":"OQA_E_FINAL plain"}]}' > "$WORK_DIR/scenario-e.json"
   mkdir -p "$WORK_DIR/req-d" "$WORK_DIR/req-e"
   oqa_pl_start_fake "$WORK_DIR/scenario-d.json" "$WORK_DIR/req-d" || true
