@@ -125,11 +125,15 @@ function buildDeps(fixture: Fixture, overrides: Partial<CodexComponentsDoctorDep
     env: {},
     platform: TEST_PLATFORM,
     arch: TEST_ARCH,
-    // The sg fixtures are byte-filled placeholders, not runnable binaries, and the resolver now
-    // requires every candidate to answer `--version` with `ast-grep`. These cases assert doctor
-    // reporting, not probe behaviour (that is pinned in packages/utils/src/ast-grep), so stand in
-    // for the probe here instead of shipping a platform-specific executable stub.
-    sgRunVersionProbeSync: () => "ast-grep 0.43.0",
+    // The sg fixtures are byte-filled placeholders, not runnable binaries, so stand in for the
+    // `--version` probe: paths this test created (under fixture.root) answer `ast-grep`, any other
+    // candidate on the machine (a real ~/.omo runtime sg, homebrew or /usr/local/bin) throws and
+    // is rejected, keeping every case hermetic against the host. Probe behaviour itself is pinned
+    // in packages/utils/src/ast-grep.
+    sgRunVersionProbeSync: (binaryPath) => {
+      if (!binaryPath.startsWith(fixture.root)) throw new Error(`refusing probe of non-fixture sg: ${binaryPath}`)
+      return "ast-grep 0.43.0"
+    },
     sgWhich: () => null,
     ...overrides,
   }
@@ -255,7 +259,6 @@ describe("codex components doctor check", () => {
     // when
     const result = await checkCodexComponents(
       buildDeps(fixture, {
-        sgRunVersionProbeSync: () => "ast-grep 0.43.0",
         sgWhich: (commandName) => (commandName === "sg" ? pathSg : null),
       }),
     )
