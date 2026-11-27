@@ -35,8 +35,10 @@
 #                    process-wide STOP verdict
 #   driver tests     truthful final line, --strict gate, L-18 verdict
 #                    write-back, bun/ junk guard, reload-for-stats trigger
-#                    (step 1, step 2, never) (driver sourced in import mode;
-#                    no OC2 dependency)
+#                    (step 1, step 2, never), V1 baseline recapture switch
+#                    (runs with the switch via a stubbed capture script,
+#                    never without it, fails fast on a failed capture)
+#                    (driver sourced in import mode; no OC2 dependency)
 
 set -uo pipefail
 
@@ -770,6 +772,49 @@ driver_tests() {
     fi
   fi
   unset OQA_PL_PLUGIN_BUNDLE OQA_PL_RELOAD_POLL_SECS
+
+  # 6g. V1 baseline recapture: with the switch the driver invokes the baseline
+  # capture (stubbed capture script, no V1 host needed) before the sandbox;
+  # without the switch it never runs; a failing capture fails fast with the
+  # capture log in the evidence dir.
+  local recdir="$TMP/dtrecap" stub marker fails_before
+  mkdir -p "$recdir"
+  stub="$recdir/fake-v1-baseline.sh"
+  marker="$recdir/capture-ran.marker"
+  printf '#!/usr/bin/env bash\ntouch "%s"\n' "$marker" > "$stub"
+  EV_LIVE="$recdir"
+  OQA_PL_V1_BASELINE_SCRIPT="$stub"
+  RECAPTURE_V1_BASELINE=0
+  if oqa_pl_recapture_v1_baseline && [ ! -f "$marker" ]; then
+    oqa_st_pass "driver: baseline recapture never runs without the switch"
+  else
+    bad "driver: baseline recapture ran without the switch or failed while off"
+    driver_fails=$((driver_fails + 1))
+  fi
+  RECAPTURE_V1_BASELINE=1
+  if oqa_pl_recapture_v1_baseline 2> "$recdir/driver-line.log" \
+     && [ -f "$marker" ] && grep -qF 'V1 host' "$recdir/driver-line.log"; then
+    oqa_st_pass "driver: baseline recapture runs with the switch and names the pinned host version"
+  else
+    bad "driver: baseline recapture did not run with the switch or missed the host version line"
+    driver_fails=$((driver_fails + 1))
+  fi
+  printf '#!/usr/bin/env bash\nprintf "boom: capture failed\\n" >&2\nexit 1\n' > "$stub"
+  rm -f "$marker"
+  fails_before=$FAILS
+  if oqa_pl_recapture_v1_baseline; then
+    bad "driver: baseline recapture passed despite a failing capture stub"
+    driver_fails=$((driver_fails + 1))
+  else
+    if [ $((FAILS - fails_before)) -eq 1 ] && grep -qF 'boom: capture failed' "$recdir/v1-baseline-recapture.out"; then
+      oqa_st_pass "driver: baseline recapture fails fast with the capture log on failure"
+    else
+      bad "driver: baseline recapture failure path was not truthful"
+      driver_fails=$((driver_fails + 1))
+    fi
+  fi
+  RECAPTURE_V1_BASELINE=0
+  unset OQA_PL_V1_BASELINE_SCRIPT
 
   FAILS=$((self_fails + driver_fails))
 }

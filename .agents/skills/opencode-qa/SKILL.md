@@ -198,9 +198,9 @@ bash scripts/v2-plugin-probe.sh    # sandboxed serve, GET /api/plugin, one JSON 
 |---|---|
 | `scripts/v2-bootstrap.sh` | Installs or verifies the pinned OpenCode 2 host inside `$OC2_HOME`. No `npm i -g`, no PATH mutation, no writes outside `$OC2_HOME`. |
 | `scripts/v2-plugin-probe.sh` | Boots a sandboxed V2 server, waits for the plugin in `GET /api/plugin`, prints one JSON verdict (`pluginIds`, `loaded`, `loadErrors`, `isolation`). Exit 0 loaded clean, 2 not loaded, 1 harness error. `--self-test` drives the broken-plugin failure path. |
-| `scripts/v2-v1-baseline.sh` | Captures the V1 agent, prompt and tool baseline through the V1 server API into committed fixtures under `parity/fixtures/v1-baseline/` (byte-deterministic). |
+| `scripts/v2-v1-baseline.sh` | Captures the V1 agent, prompt and tool baseline through the V1 server API into committed fixtures under `parity/fixtures/v1-baseline/` (byte-deterministic). The fixtures are an artifact of one machine (V1 prompts embed the workstation block and timezone); the CI job recaptures them on the runner through `v2-parity-live.sh --recapture-v1-baseline` before its live run. |
 | `scripts/v2-capture-shapes.sh` | Records 2.4.1 host shapes (events, session context, tools, agents, mcp, commands, hook payloads) as fixtures under `parity/fixtures/host-2.4.1/`, driving runs through the scenario fake model `scripts/lib/v2-fake-model.mjs`. |
-| `v2-parity-live.sh` | NOT on disk yet. Arrives with wave 1: `--wave <n>` will run every live parity row up to wave `n` against a sandboxed `opencode2 serve` with the fake model. |
+| `v2-parity-live.sh` | Runs every live parity row up to wave `n` against a sandboxed `opencode2 serve` with the fake model; `--recapture-v1-baseline` recaptures the V1 baseline fixtures on the machine the run executes on before the sandbox exists. The CI job installs the pinned OpenCode 1 host (`opencode-ai@<V1_VERSION>` from `lib/v2-versions.sh`), then drives the script with `--ci --skip-v1 --no-build --recapture-v1-baseline` and uploads the evidence. |
 
 Proving a hook fired takes BOTH halves: the `[opencode-v2] hook <name> fired`
 marker in the sandboxed plugin log (emitted once per session per hook) AND

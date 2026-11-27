@@ -38,6 +38,13 @@
 #     permission is excluded from the fixtures; prompts contain no sandbox
 #     paths (verified) but do embed machine workstation blocks.
 #
+# CI recapture note: those workstation blocks (omo-model-core ref, kernel,
+# CPU, Terminal) and the timezone make the fixtures an artifact of ONE
+# machine. The CI job therefore recaptures the baseline on the runner via
+# v2-parity-live.sh --recapture-v1-baseline (which calls this script before
+# its sandbox exists), so the L-03 byte comparison is V1 versus OpenCode 2
+# on the same machine. Local runs keep the committed fixtures.
+#
 # Usage:
 #   v2-v1-baseline.sh              # capture into the worktree fixtures dir
 #   v2-v1-baseline.sh --self-test  # assertions over an existing capture

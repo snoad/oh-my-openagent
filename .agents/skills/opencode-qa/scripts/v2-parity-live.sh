@@ -32,9 +32,21 @@
 #
 # Usage:
 #   v2-parity-live.sh --wave <n> [--ci] [--strict] [--skip-v1] [--self-test] [--no-build]
+#                     [--recapture-v1-baseline]
 #   --strict: exit non-zero when any selected row (wave <= N) is partial,
 #             stop or pending (later wave gates use it; the wave-2 gate does
 #             not).
+#   --recapture-v1-baseline: BEFORE the sandbox is created, re-run
+#             v2-v1-baseline.sh so the committed V1 fixtures are recaptured
+#             on the machine the run executes on (V1 agent prompts embed
+#             environment-derived content: the omo-model-core workstation
+#             block and the timezone; the committed fixtures are an artifact
+#             of one machine, so byte equality between the V1 and V2 prompts
+#             is only meaningful when both captures come from the same
+#             machine). The CI workflow passes the switch explicitly; local
+#             runs keep the committed fixtures. The capture log lands in the
+#             evidence dir (v1-baseline-recapture.out); a failed capture
+#             fails the run fast with the log tail.
 #
 # Env:
 #   OQA_V2_PLUGIN_DIR   plugin dir under test (default: the repo root; the
@@ -56,6 +68,7 @@ STRICT_FLAG=""
 SKIP_V1=0
 SELF_TEST=0
 NO_BUILD=0
+RECAPTURE_V1_BASELINE=0
 EV_LIVE=""
 
 oqa_pl_log()  { printf '[v2-parity-live] %s\n' "$*" >&2; }
@@ -217,6 +230,32 @@ oqa_pl_verify_oc2() {
     return 1
   fi
   oqa_pl_pass "OC2 $OC2_VERSION verified at $OC2"
+}
+
+# ---- V1 baseline recapture ---------------------------------------------------
+# The committed v1-baseline fixtures were captured on one machine; V1 agent
+# prompts embed environment-derived content (the omo-model-core workstation
+# block, the timezone), so L-03's byte equality is only meaningful when the
+# V1 and V2 captures come from the same machine. With the switch the capture
+# runs BEFORE the driver sandbox is created (it owns its own isolated XDG via
+# lib/common.sh). OQA_PL_V1_BASELINE_SCRIPT overrides the capture script so
+# the self-test can stub it (no V1 host needed in import mode).
+oqa_pl_recapture_v1_baseline() {
+  [ "$RECAPTURE_V1_BASELINE" -eq 1 ] || return 0
+  . "$SCRIPT_DIR/lib/v2-versions.sh"
+  local script="${OQA_PL_V1_BASELINE_SCRIPT:-$SCRIPT_DIR/v2-v1-baseline.sh}" log rc
+  oqa_pl_log "recapturing the V1 agent baseline on the pinned V1 host $V1_VERSION (the committed fixtures are an artifact of one machine)"
+  mkdir -p "$EV_LIVE"
+  log="$EV_LIVE/v1-baseline-recapture.out"
+  bash "$script" > "$log" 2>&1
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    oqa_pl_log "V1 baseline recapture failed (rc=$rc); log tail follows"
+    tail -n 20 "$log" >&2 2>/dev/null || true
+    oqa_pl_fail "V1 baseline recapture failed; full log: $log"
+    return 1
+  fi
+  oqa_pl_pass "V1 baseline recaptured on host $V1_VERSION (log: $log)"
 }
 
 # ---- fake model control ----------------------------------------------------
@@ -402,6 +441,10 @@ oqa_pl_main() {
     sys_ver_before="$("$sys_cmd" --version 2>/dev/null | tail -1)"
   fi
   db_before="$(oqa_v2_real_db_digest)"
+
+  # The baseline recapture runs before oqa_v2_mk_sandbox: the capture owns its
+  # own isolated XDG sandbox and needs only the built dist + the system V1 host.
+  oqa_pl_recapture_v1_baseline || return 1
 
   WORK_DIR="$(mktemp -d -t oqa-v2-parity.XXXXXX)"
   oqa_pl_log "work dir: $WORK_DIR"
@@ -793,6 +836,7 @@ while [ $# -gt 0 ]; do
     --skip-v1) SKIP_V1=1; shift ;;
     --self-test) SELF_TEST=1; shift ;;
     --no-build) NO_BUILD=1; shift ;;
+    --recapture-v1-baseline) RECAPTURE_V1_BASELINE=1; shift ;;
     -h|--help) sed -n '2,36p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) printf 'unknown option: %s\n' "$1" >&2; exit 2 ;;
   esac
