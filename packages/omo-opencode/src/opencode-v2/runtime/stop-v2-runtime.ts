@@ -13,6 +13,11 @@ export type V2Runtime = {
   readonly engine: V2EngineHooks
   readonly tracker: V2RuntimeTracker
   readonly abort: AbortController
+  // The event subscriptions the adapters registered; stop() awaits each one
+  // so their per-subscription cleanup (the L-11/L-24 stats line) runs on
+  // runtime stop, not only when a host invokes the plugin cleanup. Optional:
+  // the parity row harnesses hand-build runtime records without it.
+  readonly subscriptions?: Array<{ readonly stop: () => Promise<void> }>
   readonly stop: () => Promise<void>
   stopped: boolean
 }
@@ -24,6 +29,9 @@ export async function stopV2Runtime(runtime: V2Runtime): Promise<void> {
     activeV2Runtimes.delete(runtime.directory)
   }
   runtime.abort.abort()
+  for (const subscription of runtime.subscriptions ?? []) {
+    await subscription.stop()
+  }
   for (const name of runtime.tracker.releasedDeps) {
     await releaseV2ProcessDep(name)
   }

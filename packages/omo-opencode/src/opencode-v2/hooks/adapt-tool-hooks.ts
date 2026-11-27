@@ -1,6 +1,6 @@
 import type { Hooks } from "@opencode-ai/plugin"
 
-import { fromV1ToolOutput, toV1ToolResult } from "../client/tool-result-codecs"
+import { fromV1ToolOutput, toV1ReadToolResult, toV1ToolResult } from "../client/tool-result-codecs"
 import type { V2ToolContentOut, V2ToolResultInput } from "../client/shape-codec-types"
 import { isRecord } from "../events/v2-event-payload"
 import type { V2RuntimePluginContext } from "../runtime/start-v2-runtime"
@@ -99,12 +99,18 @@ export function registerToolHookAdapters(
     const handler = engine["tool.execute.before"]
     if (handler === undefined) return
     const baseArgs = recordArgsOf(event.input)
-    const output = { args: baseArgs }
+    const output: { args: Record<string, unknown>; message?: string } = { args: baseArgs }
     await handler(
       { tool: toV1ToolNameForCall(event.tool, event.codemode), sessionID: event.sessionID, callID: event.id },
       output,
     )
     if (output.args !== baseArgs) event.input = output.args
+    // The V1 host vetoes a call through output.message (bash-file-read-guard,
+    // non-interactive-env, prometheus-md-only); on OpenCode 2 the same veto is
+    // a hook rejection carrying that message verbatim.
+    if (typeof output.message === "string" && output.message.length > 0) {
+      throw new Error(output.message)
+    }
   })
 
   void ctx.tool.hook("execute.after", async (event) => {
@@ -118,7 +124,7 @@ export function registerToolHookAdapters(
       await handler(input, undefined)
       return
     }
-    const v1Result = toV1ToolResult(codecInputOf(result))
+    const v1Result = tool === "read" ? toV1ReadToolResult(codecInputOf(result)) : toV1ToolResult(codecInputOf(result))
     const output = { title: v1Result.title ?? tool, output: v1Result.output, metadata: v1Result.metadata ?? {} }
     const initialOutput = output.output
     const initialTitle = output.title

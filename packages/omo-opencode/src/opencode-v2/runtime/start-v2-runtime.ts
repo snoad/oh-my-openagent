@@ -100,6 +100,7 @@ export async function startV2Runtime(ctx: V2RuntimePluginContext, deps: V2Runtim
     engine,
     tracker,
     abort: new AbortController(),
+    subscriptions: [],
     stopped: false,
     stop: () => stopV2Runtime(runtime),
   }

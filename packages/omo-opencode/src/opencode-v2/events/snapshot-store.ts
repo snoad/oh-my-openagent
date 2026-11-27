@@ -2,6 +2,7 @@ import type { SessionMessageInfo } from "@opencode/client"
 
 import { toV1Messages } from "../client/to-v1-messages"
 import { diffSnapshots } from "./snapshot-diff"
+import type { V2EventFetchStats } from "./event-stats"
 import type { V1OutEvent, WritableV1SessionInfo } from "./v1-out-event"
 
 // Per-session snapshot store (plan task 14): holds the V2 session entries,
@@ -28,6 +29,7 @@ export type SnapshotStoreOptions = {
   readonly scheduler?: SnapshotScheduler
   readonly debug?: (message: string) => void
   readonly refreshDelayMs?: number
+  readonly stats?: V2EventFetchStats
 }
 
 type SessionRecord = {
@@ -64,6 +66,7 @@ export function createSnapshotStore(options: SnapshotStoreOptions): SnapshotStor
   const scheduler = options.scheduler ?? defaultSnapshotScheduler()
   const debug = options.debug ?? (() => undefined)
   const refreshDelayMs = options.refreshDelayMs ?? 0
+  const stats = options.stats
   const records = new Map<string, SessionRecord>()
 
   const evictBeyondCapacity = (): void => {
@@ -100,8 +103,10 @@ export function createSnapshotStore(options: SnapshotStoreOptions): SnapshotStor
   const runRefresh = async (sessionID: string): Promise<void> => {
     let entries: readonly SessionMessageInfo[]
     try {
+      if (stats !== undefined) stats.contextFetches += 1
       entries = await options.ctx.session.context({ sessionID })
     } catch (error) {
+      if (stats !== undefined) stats.contextFetchFailures += 1
       debug(
         `[v2-events] context fetch failed for ${sessionID}: ${error instanceof Error ? error.message : String(error)}`,
       )
@@ -116,10 +121,12 @@ export function createSnapshotStore(options: SnapshotStoreOptions): SnapshotStor
   }
 
   const scheduleRefresh = (sessionID: string): void => {
+    if (stats !== undefined) stats.fetchWorthy += 1
     const record = touch(sessionID)
     if (record.refreshCancel !== undefined) return
     record.refreshCancel = scheduler.setTimeout(() => {
       record.refreshCancel = undefined
+      if (stats !== undefined) stats.coalesceBatches += 1
       void runRefresh(sessionID)
     }, refreshDelayMs)
   }

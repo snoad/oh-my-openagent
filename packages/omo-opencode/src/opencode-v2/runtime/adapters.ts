@@ -36,7 +36,7 @@ export type V2AdapterRegistration = {
 const v2EventAdapterRegistration: V2AdapterRegistration = {
   id: "v2-events",
   register: ({ ctx, runtime }) => {
-    void subscribeV2Events(
+    const subscription = subscribeV2Events(
       ctx as V2RuntimePluginContext & V2EventSubscriptionContext,
       async ({ event }) => {
         const sessionID = v1EventSessionID(event)
@@ -45,6 +45,7 @@ const v2EventAdapterRegistration: V2AdapterRegistration = {
       },
       { signal: runtime.abort.signal },
     )
+    runtime.subscriptions?.push(subscription)
   },
 }
 

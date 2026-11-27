@@ -1,5 +1,6 @@
 import { v2SubscriptionTypes } from "./v1-event-catalog"
 import { createSnapshotStore, type SnapshotScheduler, type SnapshotStoreContext } from "./snapshot-store"
+import { createV2EventStats, emitV2EventStats, type V2EventStats } from "./event-stats"
 import type { V1OutEvent } from "./v1-out-event"
 import { translate } from "./v2-to-v1-events"
 import type { V2IncomingEvent } from "./v2-event-payload"
@@ -9,7 +10,9 @@ import type { V2IncomingEvent } from "./v2-event-payload"
 // delivery for every result inside try/catch error isolation (a failing V1
 // handler or translation is logged and skipped, the loop continues).
 // stop() aborts the subscription, awaits loop completion through an
-// injectable timeout and cancels the pending snapshot refreshes.
+// injectable timeout and cancels the pending snapshot refreshes. The stats
+// line (live rows L-11/L-24) is emitted exactly once, after the loop and
+// the store are gone.
 
 export type V2EventSubscriptionContext = SnapshotStoreContext & {
   readonly event: {
@@ -18,6 +21,7 @@ export type V2EventSubscriptionContext = SnapshotStoreContext & {
       readonly signal?: AbortSignal
     }) => AsyncIterable<V2IncomingEvent>
   }
+  readonly location?: { readonly directory?: string }
 }
 
 export type V1EventDelivery = { readonly event: V1OutEvent }
@@ -43,7 +47,10 @@ export function subscribeV2Events(
   const debug = options.debug ?? defaultDebug
   const controller = new AbortController()
   options.signal?.addEventListener("abort", () => controller.abort(), { once: true })
+  const stats: V2EventStats = createV2EventStats()
+  stats.directory = typeof ctx.location?.directory === "string" ? ctx.location.directory : ""
   const deliverEvent = async (event: V1OutEvent): Promise<void> => {
+    stats.translated += 1
     try {
       await onV1Event({ event })
     } catch (error) {
@@ -57,14 +64,20 @@ export function subscribeV2Events(
     },
     scheduler: options.scheduler,
     debug,
+    stats,
   })
   const iteration = ctx.event.subscribe({ types: v2SubscriptionTypes(), signal: controller.signal })
-  const loopDone = runLoop(iteration, store, deliverEvent, debug)
+  const loopDone = runLoop(iteration, store, deliverEvent, debug, stats)
+  let statsEmitted = false
   return {
     stop: async () => {
       controller.abort()
       await withTimeout(loopDone, options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS, debug)
       store.dispose()
+      if (!statsEmitted) {
+        statsEmitted = true
+        emitV2EventStats(stats, debug)
+      }
     },
   }
 }
@@ -74,9 +87,11 @@ async function runLoop(
   store: ReturnType<typeof createSnapshotStore>,
   deliverEvent: (event: V1OutEvent) => Promise<void>,
   debug: (message: string) => void,
+  stats: V2EventStats,
 ): Promise<void> {
   try {
     for await (const v2Event of iteration) {
+      stats.eventsSeen += 1
       let translated: V1OutEvent[]
       try {
         translated = translate(v2Event, store)

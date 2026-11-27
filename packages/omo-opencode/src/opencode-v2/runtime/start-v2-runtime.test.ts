@@ -110,6 +110,43 @@ describe("startV2Runtime", () => {
     await runtime.stop()
   })
 
+  test("#given a live runtime #when the runtime stops #then the event subscription emits exactly one stats line", async () => {
+    // given
+    const sideEffects = createFakeV2SideEffects()
+    const ctx = fakeLocationContext("/tmp/w1-stats")
+    const engine = createStubV2EngineFactory({ ctx, subscribe: true, timerMs: 5_000 })
+    const runtime = await startV2Runtime(ctx, { engineFactory: engine.factory, sideEffects })
+    const originalDebug = console.debug
+    const lines: string[] = []
+    console.debug = (...values: unknown[]) => {
+      lines.push(values.map((value) => String(value)).join(" "))
+    }
+
+    // when
+    try {
+      await runtime.stop()
+    } finally {
+      console.debug = originalDebug
+    }
+
+    // then
+    expect(runtime.subscriptions?.length).toBe(1)
+    const stats = lines.filter((line) => line.startsWith("[opencode-v2] event stats "))
+    expect(stats, "exactly one stats line at runtime stop").toHaveLength(1)
+    const parsed = JSON.parse((stats[0] ?? "").slice("[opencode-v2] event stats ".length)) as Record<string, unknown>
+    expect(parsed.directory).toBe("/tmp/w1-stats")
+    for (const key of [
+      "eventsSeen",
+      "translated",
+      "fetchWorthy",
+      "coalesceBatches",
+      "contextFetches",
+      "contextFetchFailures",
+    ]) {
+      expect(typeof parsed[key], `counter ${key} is a number`).toBe("number")
+    }
+  })
+
   test("#given a stopped runtime #when cleanup runs twice #then dispose runs exactly once without error", async () => {
     // given
     const sideEffects = createFakeV2SideEffects()

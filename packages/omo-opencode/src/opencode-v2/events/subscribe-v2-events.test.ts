@@ -2,8 +2,10 @@ import { describe, expect, it } from "bun:test"
 
 import { createFakeV2Context } from "../parity/fake-v2-context"
 import { createManualEventScheduler } from "../parity/fake-v2-event-replay"
-import { subscribeV2Events } from "./subscribe-v2-events"
+import { formatV2EventStats, type V2EventStats } from "./event-stats"
+import { subscribeV2Events, type V2EventSubscriptionContext } from "./subscribe-v2-events"
 import type { V1OutEvent } from "./v1-out-event"
+import type { V2IncomingEvent } from "./v2-event-payload"
 
 // Subscription loop of plan task 14: ctx.event.subscribe({ types: <all
 // catalog sources>, signal }), per event translate then await onV1Event for
@@ -221,5 +223,99 @@ describe("subscribeV2Events", () => {
 
     // then
     expect(delivered).toEqual(["session.created"])
+  })
+
+  describe("event stats line (live rows L-11/L-24)", () => {
+    function parseStats(lines: readonly string[]): Record<string, unknown> {
+      const stats = lines.filter((line) => line.startsWith("event stats "))
+      expect(stats, "exactly one stats line per stop").toHaveLength(1)
+      return JSON.parse(stats[0]?.slice("event stats ".length) ?? "{}") as Record<string, unknown>
+    }
+
+    function throwingFetchContext(events: readonly { type: string; data: unknown }[]): V2EventSubscriptionContext {
+      const stream = async function* () {
+        for (const event of events) yield event as V2IncomingEvent
+      }
+      return {
+        session: {
+          context: async () => {
+            throw new Error("fetch boom")
+          },
+        },
+        event: { subscribe: () => stream() },
+        location: { directory: "/tmp/stats-dir" },
+      }
+    }
+
+    it("#given a replay with fetch-worthy events #when the subscription stops #then the counters land on the pinned keys and satisfy the fetch bound", async () => {
+      // given
+      const scheduler = createManualEventScheduler()
+      const ctx = createFakeV2Context({ scheduler })
+      void ctx.session.create({ id: "ses_1" })
+      const logs: string[] = []
+      const subscription = subscribeV2Events(ctx, () => undefined, {
+        scheduler,
+        debug: (message) => logs.push(message),
+      })
+
+      // when
+      try {
+        ctx.__pushEvent({ type: "session.created", created: 5, data: { sessionID: "ses_1" } })
+        await flushAsync()
+        ctx.__pushEvent({ type: "session.step.first-token", created: 6, data: { sessionID: "ses_1" } })
+        ctx.__pushEvent({ type: "session.step.first-token", created: 7, data: { sessionID: "ses_1" } })
+        await flushAsync()
+        scheduler.fire()
+        await flushAsync()
+      } finally {
+        await subscription.stop()
+      }
+      await subscription.stop()
+
+      // then
+      const stats = parseStats(logs) as V2EventStats
+      expect(stats.directory).toBe("/tmp/fake-v2")
+      expect(stats.eventsSeen).toBe(3)
+      expect(stats.translated).toBe(1)
+      expect(stats.fetchWorthy).toBe(2)
+      expect(stats.coalesceBatches).toBe(1)
+      expect(stats.contextFetches).toBe(1)
+      expect(stats.contextFetchFailures).toBe(0)
+      expect(
+        (stats.contextFetches as number) <= (stats.fetchWorthy as number) + (stats.coalesceBatches as number),
+        "contextFetches <= fetchWorthy + coalesceBatches",
+      ).toBe(true)
+      const captured = logs.find((line) => line.startsWith("event stats ")) ?? ""
+      expect(formatV2EventStats(stats), "the file-log line carries the full pinned marker").toBe(
+        `[opencode-v2] ${captured}`,
+      )
+    })
+
+    it("#given a context fetch that throws #when the batch runs and the subscription stops #then the failure counter and directory land on the line", async () => {
+      // given
+      const logs: string[] = []
+      const subscription = subscribeV2Events(
+        throwingFetchContext([
+          { type: "session.step.first-token", data: { sessionID: "ses_9" } },
+          { type: "session.step.first-token", data: { sessionID: "ses_9" } },
+        ]),
+        () => undefined,
+        { debug: (message) => logs.push(message) },
+      )
+
+      // when
+      await flushAsync()
+      await flushAsync()
+      await subscription.stop()
+
+      // then
+      const stats = parseStats(logs)
+      expect(stats.directory).toBe("/tmp/stats-dir")
+      expect(stats.eventsSeen).toBe(2)
+      expect(stats.fetchWorthy).toBe(2)
+      expect(stats.coalesceBatches).toBe(1)
+      expect(stats.contextFetches).toBe(1)
+      expect(stats.contextFetchFailures).toBe(1)
+    })
   })
 })
