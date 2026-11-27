@@ -27,7 +27,7 @@ const v2TodoAdapterRegistration = {
   register: ({ ctx, runtime }: { readonly ctx: V2RuntimePluginContext; readonly runtime: V2Runtime }) => {
     const planSource = runtime.planSource
     if (planSource === undefined) throw new Error("[opencode-v2] todo registration: plan source missing")
-    return registerTodoTools(ctx as V2TodoSessionContext, runtime.engine, planSource)
+    registerTodoTools(ctx as V2TodoSessionContext, planSource)
   },
 }
 

@@ -127,10 +127,6 @@ export type TodoToolEditor = {
   readonly add: (tool: TodoToolRegistrationEntry) => void
 }
 
-export type TodoToolRegistrationEngine = {
-  readonly "tool.definition"?: (input: { toolID: string }, output: { description: string; parameters: unknown }) => void
-}
-
 // The registration needs only the step registry side of the plan source; the
 // step run reads no PlanStepRunInput, so this structural subset stays
 // satisfiable by the real PlanSource and by test doubles alike.
@@ -144,7 +140,13 @@ export type TodoToolPlanSource = {
 
 const STEP_ID = "v2-todo-registration"
 
-async function applyTodoTools(ctx: TodoToolExecuteContext, engine: TodoToolRegistrationEngine): Promise<void> {
+// The stand-ins follow the host-native rule: on V1 a host-native tool is in
+// the tool list but NEVER recorded as a plugin tool snippet (the engine
+// tool.definition handler is what records snippets, and the V1 host never
+// invokes it for a native tool), so the registration adds the editor entries
+// only - no engine tool.definition call, no prompt snippet line.
+
+async function applyTodoTools(ctx: TodoToolExecuteContext): Promise<void> {
   const definitions = todoToolDefinitions(ctx).filter((entry) => isCompleteTodoToolEntry(entry))
   if (definitions.length !== 2) log(`${LOG_MARKER}: skipped an incomplete todo tool entry`)
   await ctx.tool.transform(
@@ -156,19 +158,10 @@ async function applyTodoTools(ctx: TodoToolExecuteContext, engine: TodoToolRegis
       return editor
     }),
   )
-  const definition = engine["tool.definition"]
-  for (const entry of definitions) {
-    if (definition === undefined) break
-    await definition({ toolID: entry.id }, { description: entry.description, parameters: entry.input })
-  }
   log(`${LOG_MARKER}: registered ${String(definitions.length)} todo tools`)
 }
 
-export function registerTodoTools(
-  ctx: TodoToolExecuteContext,
-  engine: TodoToolRegistrationEngine,
-  planSource: TodoToolPlanSource,
-): void {
+export function registerTodoTools(ctx: TodoToolExecuteContext, planSource: TodoToolPlanSource): void {
   // The step joins BEFORE the task-25 tool step's initial recompute so every
   // recompute applies both registrations in one complete pass. The gate
   // decision is evaluated once against ctx.tool.list() (the host list at
@@ -187,7 +180,7 @@ export function registerTodoTools(
           return
         }
       }
-      await applyTodoTools(ctx, engine)
+      await applyTodoTools(ctx)
     },
   })
 }

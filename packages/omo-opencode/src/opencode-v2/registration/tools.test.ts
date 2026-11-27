@@ -236,10 +236,8 @@ describe("registerToolTransform over the real engine", () => {
 
       // then: the snippet refresh ran in complete passes over the plugin
       // registry (one call per visible tool per recompute; the recompute
-      // count varies with host events, the pass size does not). The pass
-      // carries the default families, the todo family (task 29: todowrite +
-      // todoread register when the host lacks todowrite) and interactive_bash.
-      const perPass = DEFAULT_FAMILY_TOOLS.length + 2 + (isInteractiveBashEnabled() ? 1 : 0)
+      // count varies with host events, the pass size does not)
+      const perPass = DEFAULT_FAMILY_TOOLS.length + (isInteractiveBashEnabled() ? 1 : 0)
       const refreshCalls = recorder.count("todoDescriptionOverride")
       expect(refreshCalls, "snippet refresh calls").toBeGreaterThanOrEqual(perPass)
       expect(refreshCalls % perPass, "complete refresh passes").toBe(0)

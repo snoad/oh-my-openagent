@@ -1,7 +1,13 @@
 import { describe, expect, it } from "bun:test"
 
+import { releaseAllPromptAsyncReservationsForTesting } from "@oh-my-opencode/utils/prompt-async-gate"
+
 import toolsBaseline from "../parity/fixtures/v1-baseline/tools.json"
 import { createFakeV2Context, type FakeV2Context } from "../parity/fake-v2-context"
+import { createFakeV2SideEffects } from "../parity/fake-v2-side-effects"
+import { startV2Runtime } from "../runtime/start-v2-runtime"
+import { resetV2ProcessStateForTesting } from "../runtime/v2-runtime-deps"
+import { TODOWRITE_DESCRIPTION } from "../../hooks/todo-description-override/description"
 import { registerTodoTools, type TodoToolPlanSource } from "./todo-tools"
 import { writeSessionTodos } from "./todo-store"
 
@@ -72,7 +78,7 @@ describe("registerTodoTools", () => {
 
     // when
     const planSource = inlinePlanSource()
-    await registerTodoTools(ctx, {}, planSource)
+    await registerTodoTools(ctx, planSource)
     await planSource.recompute()
 
     // then
@@ -91,7 +97,7 @@ describe("registerTodoTools", () => {
 
     // when
     const planSource = inlinePlanSource()
-    await registerTodoTools(ctx, {}, planSource)
+    await registerTodoTools(ctx, planSource)
     await planSource.recompute()
 
     // then
@@ -106,7 +112,7 @@ describe("registerTodoTools", () => {
     // given
     const ctx = createFakeV2Context()
     const planSource = inlinePlanSource()
-    await registerTodoTools(ctx, {}, planSource)
+    await registerTodoTools(ctx, planSource)
     await planSource.recompute()
 
     // when: the host replay re-runs every captured transform over a fresh editor
@@ -125,7 +131,7 @@ describe("registered todo tool execute", () => {
     const ctx = createFakeV2Context()
     await ctx.session.create({ id: "ses_exec" })
     const planSource = inlinePlanSource()
-    await registerTodoTools(ctx, {}, planSource)
+    await registerTodoTools(ctx, planSource)
     await planSource.recompute()
     const todowrite = await executeOf(ctx, "todowrite")
     const todos = [
@@ -152,7 +158,7 @@ describe("registered todo tool execute", () => {
     const ctx = createFakeV2Context()
     await ctx.session.create({ id: "ses_read" })
     const planSource = inlinePlanSource()
-    await registerTodoTools(ctx, {}, planSource)
+    await registerTodoTools(ctx, planSource)
     await planSource.recompute()
     const stored = await writeSessionTodos(ctx, "ses_read", [
       { content: "watch me", status: "pending", priority: "medium" },
@@ -172,7 +178,7 @@ describe("registered todo tool execute", () => {
     const ctx = createFakeV2Context()
     await ctx.session.create({ id: "ses_restore" })
     const planSource = inlinePlanSource()
-    await registerTodoTools(ctx, {}, planSource)
+    await registerTodoTools(ctx, planSource)
     await planSource.recompute()
     const todowrite = await executeOf(ctx, "todowrite")
     const restored = [{ id: "orchestrate-plan", content: "Complete ALL implementation tasks", status: "in_progress" }]
@@ -192,7 +198,7 @@ describe("registered todo tool execute", () => {
     const ctx = createFakeV2Context()
     await ctx.session.create({ id: "ses_string" })
     const planSource = inlinePlanSource()
-    await registerTodoTools(ctx, {}, planSource)
+    await registerTodoTools(ctx, planSource)
     await planSource.recompute()
     const todowrite = await executeOf(ctx, "todowrite")
 
@@ -209,5 +215,58 @@ describe("registered todo tool execute", () => {
     expect(info.metadata?.["omo.todos"]).toEqual([
       { content: "string form", status: "pending", priority: "low", id: "ses_string:0" },
     ])
+  })
+})
+
+describe("todo stand-ins and the agent prompt snippets", () => {
+  let bootCounter = 0
+
+  it("#given the real engine with the todo stand-ins registered #when the plan source builds the agent prompts #then no todo snippet line is embedded while the tools carry the override description", async () => {
+    // given: the full boot applies the todo step and the registry tools in
+    // the same recomputes that build the agent prompts
+    resetV2ProcessStateForTesting()
+    bootCounter += 1
+    const directory = `/tmp/fake-v2-t29b-${String(bootCounter)}`
+    const ctx = createFakeV2Context({
+      location: { directory, project: { id: `prj_t29b_${String(bootCounter)}`, directory, canonical: directory } },
+    })
+    const runtime = await startV2Runtime(ctx, { sideEffects: createFakeV2SideEffects() })
+
+    try {
+      // when: the settled boot state and one fresh recompute (the live
+      // L-03 row compares the prompts before and after a host config change,
+      // and snippets recorded by the registration would only render in the
+      // recomputes after the recording)
+      const tools = await ctx.tool.list()
+      await runtime.planSource?.recompute()
+      const agents = await ctx.agent.list()
+
+      // then: the stand-ins are registered with the override text on todowrite
+      const todowrite = tools.find((tool) => tool.id === "todowrite")
+      expect(todowrite, "todowrite registered by the plugin").toBeDefined()
+      expect(todowrite?.description).toBe(TODOWRITE_DESCRIPTION)
+      expect(
+        tools.some((tool) => tool.id === "todoread"),
+        "todoread registered by the plugin",
+      ).toBe(true)
+
+      // then: no agent prompt carries a todo snippet line (the host-native
+      // rule: present in the tool list, absent from the prompt snippets)
+      expect(agents.data.length, "agents registered").toBeGreaterThan(0)
+      for (const agent of agents.data) {
+        const todoLines = (agent.system ?? "").split("\n").filter((line) => /^- (todo|todowrite|todoread): /.test(line))
+        expect(todoLines, `agent ${agent.id} carries a todo snippet line`).toEqual([])
+      }
+
+      // then: the snippet machinery still records registry tools (a registry
+      // snippet line exists somewhere, so the absence above is not vacuous)
+      expect(
+        agents.data.some((agent) => (agent.system ?? "").split("\n").some((line) => line.startsWith("- grep: "))),
+        "a registry snippet line survives in the prompts",
+      ).toBe(true)
+    } finally {
+      await runtime.stop()
+      releaseAllPromptAsyncReservationsForTesting()
+    }
   })
 })

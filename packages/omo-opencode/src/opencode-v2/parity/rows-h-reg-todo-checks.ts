@@ -37,7 +37,7 @@ export async function checkHostGateKeepsStore(): Promise<void> {
   await ctx.session.create({ id: "ses_gate" })
   const before = (await ctx.tool.list()).map((tool) => tool.id)
   const planSource = inlinePlanSource()
-  await registerTodoTools(ctx, {}, planSource)
+  await registerTodoTools(ctx, planSource)
   await planSource.recompute()
 
   const after = await ctx.tool.list()
