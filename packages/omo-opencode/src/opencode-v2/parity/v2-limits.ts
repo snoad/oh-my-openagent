@@ -3,6 +3,7 @@ import { createRequire } from "node:module"
 import { join } from "node:path"
 
 import type { IsRow } from "./rows"
+import { lim15PermissionProjectionCheck, lim21UnsupportedEntryCheck } from "./v2-limits-checks"
 
 export type V2Limit = {
   id: string
@@ -16,10 +17,11 @@ export type V2Limit = {
 // LAW (opencode-v2-compat plan, task 5): a limit id NOT seeded here may never
 // be added. A newly discovered gap is stop-and-report BLOCKED, not a new limit.
 // Task 43 closes the ledger: each entry is removed when its wave reached parity
-// or set to confirmed with apiEvidence resolvable under
-// node_modules/@opencode/plugin/dist plus a passing gracefulCheck. Every limit
-// maps to IS-13 (the ledger IS that owns the limit path) next to the natural
-// IS of its capability.
+// or set to confirmed with apiEvidence resolvable from
+// node_modules/@opencode/plugin/dist (the schema declarations cited through
+// the pinned plugin package's own dependencies) plus a passing gracefulCheck.
+// Every limit maps to IS-13 (the ledger IS that owns the limit path) next to
+// the natural IS of its capability.
 export const V2_LIMITS: V2Limit[] = [
   {
     id: "LIM-1",
@@ -121,9 +123,11 @@ export const V2_LIMITS: V2Limit[] = [
   },
   {
     id: "LIM-15",
-    status: "candidate",
+    status: "confirmed",
     is: ["IS-2", "IS-13"],
     reason: "V1 glob tool rules: literal action strings have no pattern match; the context hook hides them (task 27)",
+    apiEvidence: "../../../@opencode/schema/dist/agent.d.ts#L115-L119",
+    gracefulCheck: lim15PermissionProjectionCheck,
   },
   {
     id: "LIM-16",
@@ -150,17 +154,13 @@ export const V2_LIMITS: V2Limit[] = [
     reason: "Code Mode tool calls (codemode: true) in the tool hooks",
   },
   {
-    id: "LIM-20",
-    status: "candidate",
-    is: ["IS-6", "IS-13"],
-    reason: "expanded MCP environment values exposed through the MCP API",
-  },
-  {
     id: "LIM-21",
-    status: "candidate",
+    status: "confirmed",
     is: ["IS-5", "IS-13"],
     reason:
       "V1 provider model entries the OpenCode 2 model schema cannot express: the V1 per-model cost object and the per-model provider.npm override have no OpenCode 2 model-info counterpart, so catalog entries register without them and entries that carry none of the expressible fields (name, limit, modalities, tool_call, temperature, options, headers) are skipped with one log line naming the entry (task 28)",
+    apiEvidence: "../../../@opencode/schema/dist/model.d.ts#L507-L539",
+    gracefulCheck: lim21UnsupportedEntryCheck,
   },
   {
     id: "LIM-22",
