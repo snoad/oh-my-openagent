@@ -151,6 +151,10 @@ describe("registerToolTransform over the real engine", () => {
       expect(stableJson(byId.get("grep")?.parameters)).toBe(stableJson(lastBaselineParameters("grep")))
       expect(stableJson(byId.get("glob")?.parameters)).toBe(stableJson(lastBaselineParameters("glob")))
       expect(stableJson(byId.get("task")?.parameters)).toBe(stableJson(lastBaselineParameters("task")))
+      // then: the replaced host tool carries no declared output schema (the
+      // host would reject the codec's { content } return otherwise)
+      const updated = byId.get("grep") as { output?: unknown } | undefined
+      expect(updated?.output).toBeUndefined()
       // then: host-only names stay untouched by the plugin
       for (const name of HOST_ONLY_TOOLS) {
         expect(tools.filter((tool) => tool.id === name).length, `${name} must stay host-owned`).toBeLessThan(2)

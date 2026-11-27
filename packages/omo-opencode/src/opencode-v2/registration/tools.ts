@@ -58,6 +58,7 @@ type V2MutableToolEntry = {
   input: Record<string, unknown>
   parameters?: Record<string, unknown>
   options?: SdkToolOptions
+  output?: unknown
   execute: V2ToolDefinition["execute"]
 }
 
@@ -108,6 +109,10 @@ function applyToolToEditor(name: string, v2: V2ToolDefinition, editor: V2ToolEdi
       tool.input = v2.input
       tool.parameters = v2.input
       tool.options = v2.options
+      // The replaced host tool's declared output schema would make the host
+      // reject our { content } return ("Tool did not return its declared
+      // output", live-proven); the codec declares no output schema.
+      tool.output = undefined
       tool.execute = v2.execute
     })
     return
