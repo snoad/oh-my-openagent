@@ -65,9 +65,16 @@ export async function checkV1HooksOnTodoNames(): Promise<void> {
     engineDeps: {
       loadConfigChain: (configDirectory, environment) => {
         const validation = validatePluginConfig(configDirectory, environment)
+        // This override replaces the deps' wrapped chain, so the default
+        // disabled_hooks forcing does not apply. comment-checker must stay out
+        // of this boot: its hook flips a process-wide module gate that later
+        // test files in the same bun process depend on seeing fresh.
+        const disabledHooks = new Set(validation.config.disabled_hooks ?? [])
+        disabledHooks.add("comment-checker")
         const config: OhMyOpenCodeConfig = {
           ...validation.config,
           experimental: { ...validation.config.experimental, task_system: true },
+          disabled_hooks: [...disabledHooks],
         }
         return { ...validation, config }
       },
