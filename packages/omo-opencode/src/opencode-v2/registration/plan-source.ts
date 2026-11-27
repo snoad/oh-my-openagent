@@ -12,7 +12,7 @@ import { log } from "../../shared"
 
 import { subscribeV2RawEvents, type V2EventSubscription } from "../events/subscribe-v2-events"
 import { jsonDeepEqual, noopPlanOf } from "./plan-diff"
-import { createPlanStepRegistry, type PlanStepRegistry } from "./plan-steps"
+import { createPlanStepRegistry, type PlanStepDomain, type PlanStepRegistry } from "./plan-steps"
 import type { PlanSourceContext, PlanSourceEngine, PlanSourceScheduler } from "./plan-source-context"
 import { computeRegistrationPlan } from "./project-config"
 import { type PlanDomain, type RegistrationPlan } from "./registration-plan"
@@ -68,6 +68,24 @@ const domainReloaders: Record<PlanDomain, (ctx: PlanSourceContext) => Promise<vo
   model: (ctx) => ctx.model.reload(),
 }
 
+// The plan domains a step registration must force-reload exactly once on the
+// next recompute. The host applies a registered editor transform only when its
+// domain reloads (live row L-04 at HEAD a69eaf7234: the tool step logged
+// "registered 14 plugin tools" with no replay failure, yet no plugin tool
+// reached the session's model request, because the plan never changed after
+// the registration and so no tool reload ever ran). config has no host editor
+// to reload and permission rides on the agent items, so both map to nothing.
+const STEP_DOMAIN_RELOAD_TARGETS: Record<PlanStepDomain, readonly PlanDomain[]> = {
+  tool: ["tools"],
+  config: [],
+  agent: ["agents"],
+  permission: [],
+  mcp: ["mcp"],
+  command: ["commands"],
+  provider: ["provider"],
+  model: ["model"],
+}
+
 function changedDomains(previous: RegistrationPlan, next: RegistrationPlan): readonly PlanDomain[] {
   const changed: PlanDomain[] = []
   if (!jsonDeepEqual(previous.agents, next.agents) || !jsonDeepEqual(previous.defaultAgent, next.defaultAgent)) {
@@ -94,6 +112,7 @@ export async function createPlanSource(
   let currentPlan: RegistrationPlan | undefined
   let cancelDebounce: (() => void) | undefined
   let queueTail: Promise<void> = Promise.resolve()
+  const pendingReloads = new Set<PlanDomain>()
 
   steps.register({
     id: "plan-config-pipeline",
@@ -112,11 +131,14 @@ export async function createPlanSource(
     }
     if (currentPlan === undefined) return
     const baseline = lastApplied ?? noopPlanOf(base)
-    if (jsonDeepEqual(baseline, currentPlan)) {
+    const changed = changedDomains(baseline, currentPlan)
+    if (changed.length === 0 && pendingReloads.size === 0) {
       lastApplied = currentPlan
       return
     }
-    for (const domain of changedDomains(baseline, currentPlan)) {
+    const reloadDomains = new Set<PlanDomain>([...changed, ...pendingReloads])
+    pendingReloads.clear()
+    for (const domain of reloadDomains) {
       await domainReloaders[domain](ctx)
     }
     lastApplied = currentPlan
@@ -158,6 +180,7 @@ export async function createPlanSource(
     snapshot,
     registerStep: (step) => {
       steps.register(step.domain === "config" ? step : { ...step, run: guardReplayStep(step.id, step.run) })
+      for (const domain of STEP_DOMAIN_RELOAD_TARGETS[step.domain]) pendingReloads.add(domain)
     },
     recompute: () => enqueue(recomputeNow),
     idle: () => queueTail,

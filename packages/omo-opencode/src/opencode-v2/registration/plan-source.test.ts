@@ -146,14 +146,61 @@ describe("createPlanSource", () => {
 
     // when
     await ctx.agent.transform((editor) => {
-      editor.add({ id: "user-custom", name: "UserCustom", mode: "subagent", hidden: false })
+      editor.add({ id: "user-custom", name: "user-custom", mode: "subagent", hidden: false })
     })
     await fireOneEvent(ctx, source, scheduler, "config.updated")
 
     // then
     expect(callOps(ctx, "agent.list")).toBe(2)
     expect(Object.keys(source.getPlan()?.agents.added ?? {})).toEqual(["omo-sentinel"])
-    expect(callOps(ctx, "agent.reload")).toBe(1)
+    // the name_only normalization entry for the new base-backed agent is a
+    // real plan change, so it legitimately reloads the agent domain once
+    expect(callOps(ctx, "agent.reload")).toBe(2)
+    await source.subscription.stop()
+  })
+
+  it("#given a registered step for an unchanged plan #when the next recompute lands #then the step's domain reloads exactly once and never again", async () => {
+    // given: the sentinel plan is already applied, so no further recompute reloads anything
+    const ctx = createFakeV2Context()
+    const scheduler = createManualScheduler()
+    const source = await createPlanSource(ctx, sentinelEngine(), { scheduler })
+    expect(callOps(ctx, "tool.reload")).toBe(0)
+
+    // when: a tool-domain step registers after the initial apply (the task-25
+    // adapter order: its editor transform only reaches the host on the reload)
+    source.registerStep({
+      id: "reload-tool",
+      domain: "tool",
+      run: () => undefined,
+    })
+    await source.recompute()
+
+    // then: exactly one tool reload fired on that recompute despite the unchanged plan
+    expect(callOps(ctx, "tool.reload")).toBe(1)
+
+    // when: the same unchanged plan recomputes again
+    await fireOneEvent(ctx, source, scheduler, "config.updated")
+
+    // then: no further reload fires
+    expect(callOps(ctx, "tool.reload")).toBe(1)
+    await source.subscription.stop()
+  })
+
+  it("#given steps for tool and agent domains #when the first post-registration recompute lands #then each registered domain reloads once in one pass", async () => {
+    // given
+    const ctx = createFakeV2Context()
+    const scheduler = createManualScheduler()
+    const source = await createPlanSource(ctx, sentinelEngine(), { scheduler })
+
+    // when
+    source.registerStep({ id: "reload-tools", domain: "tool", run: () => undefined })
+    source.registerStep({ id: "reload-agents", domain: "agent", run: () => undefined })
+    await source.recompute()
+
+    // then: each registered domain reloads once on that recompute; the agent
+    // count adds the initial plan-diff reload from the sentinel engine
+    expect(callOps(ctx, "tool.reload")).toBe(1)
+    expect(callOps(ctx, "agent.reload")).toBe(2)
     await source.subscription.stop()
   })
 

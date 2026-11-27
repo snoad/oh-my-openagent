@@ -267,10 +267,22 @@ describe("registerProviderModelTransforms", () => {
     await source.recompute()
     await source.idle()
 
-    // then: the lists are unchanged, no second reload fires and the provider domain is never re-read
+    // then: the lists are unchanged, the single pending registration reload
+    // fired once (the reload-gating contract) and the provider domain is never re-read
     const afterSecond = await listSummaries(ctx)
     expect(afterSecond).toEqual(afterFirst)
-    expect(reloadCount()).toBe(1)
+    expect(reloadCount()).toBe(2)
+    expect(ctx.__calls.filter((call) => call.op === "provider.list").length).toBe(1)
+
+    // when: a recompute lands after the steps re-recorded their replay base
+    // (the plan settles onto the re-recorded provider value) and then nothing changes
+    await source.recompute()
+    await source.idle()
+    await source.recompute()
+    await source.idle()
+
+    // then: the degrade-driven settle reload fired at most once and no oscillation follows
+    expect(reloadCount()).toBe(3)
     expect(ctx.__calls.filter((call) => call.op === "provider.list").length).toBe(1)
     await source.subscription.stop()
   })
