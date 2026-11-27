@@ -2,9 +2,11 @@
 # v2-v1-regression.sh - live row L-18 (plan task 20): the V1 regression on
 # the system OpenCode 1.x.
 #
-# Boots the V1 sandbox exactly the way v2-v1-baseline.sh captured it (the
-# isolated XDG env, the plugin through its V1 "file://<repo-root>" entry, the
-# atlas model pin in the sandbox ~/.omo/omo.jsonc), compares the agent and
+# Boots the V1 sandbox under the SAME sandbox config the baseline capture
+# used: lib/v2-v1-sandbox-config.sh writes both files (the omo config with
+# the atlas model pin and the plugin harness keys into the sandbox
+# ~/.omo/omo.jsonc, and the host config with the V1 "file://<repo-root>"
+# plugin entry into the sandbox opencode.jsonc). It compares the agent and
 # tool lists against packages/omo-opencode/src/opencode-v2/parity/fixtures/
 # v1-baseline/ (ignoring the envDependent tools), asserts the V1 sandbox log
 # carries no "[opencode-v2] engine started" marker, then runs the existing
@@ -15,7 +17,10 @@
 #   v2-v1-regression.sh [--no-tui]   # --no-tui skips tui-smoke.sh
 #
 # Env:
-#   OQA_V1_EVIDENCE   evidence copy dir (default none)
+#   OQA_V1_EVIDENCE   evidence copy dir (default none); receives
+#                     isolation.txt, v1-serve.log, agents-live.json,
+#                     tool-drift-live.txt + tool-drift-fixture.txt on a tool
+#                     drift, and tui-smoke.out
 #
 # System dependencies: bash, the system V1 `opencode` binary (1.x), curl, jq,
 # sqlite3 and tmux (tui-smoke.sh). The CI job of plan task 21 installs only
@@ -26,6 +31,8 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/common.sh"
+# Same sandbox config as the baseline capture (see the lib header).
+. "$SCRIPT_DIR/lib/v2-v1-sandbox-config.sh"
 
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 FIXTURES_DIR="$REPO_ROOT/packages/omo-opencode/src/opencode-v2/parity/fixtures/v1-baseline"
@@ -81,6 +88,11 @@ oqa_v1r_main() {
   [ -f "$FIXTURES_DIR/agents.json" ] || { oqa_v1r_fail "v1-baseline fixture missing (run v2-v1-baseline.sh first)"; return 1; }
   [ -f "$REPO_ROOT/dist/index.js" ] || { oqa_v1r_fail "dist/index.js not found (run bun run build first)"; return 1; }
 
+  # Created before the serve boot so a failed L-18 keeps every evidence copy.
+  if [ -n "${OQA_V1_EVIDENCE:-}" ]; then
+    mkdir -p "$OQA_V1_EVIDENCE"
+  fi
+
   local real_db dump_before dump_after
   real_db="$(oqa_db_path)"
   dump_before="$(mktemp -t oqa-v1r-db.XXXXXX)"
@@ -88,10 +100,7 @@ oqa_v1r_main() {
   oqa_v1r_dump_db_sessions "$real_db" "$dump_before"
 
   oqa_mk_isolated_xdg || return 1
-  mkdir -p "$HOME/.omo"
-  printf '{"agents":{"atlas":{"model":"anthropic/claude-sonnet-5"}}}\n' > "$HOME/.omo/omo.jsonc"
-  mkdir -p "$XDG_CONFIG_HOME/opencode"
-  printf '{\n  "plugin": ["file://%s"]\n}\n' "$REPO_ROOT" > "$XDG_CONFIG_HOME/opencode/opencode.jsonc"
+  oqa_v1_write_sandbox_config "$REPO_ROOT"
 
   local neutral="$OQA_XDG_ROOT/neutral"
   local xdg_root="$OQA_XDG_ROOT"
@@ -199,9 +208,9 @@ oqa_v1r_main() {
     else
       oqa_v1r_fail "tool list drifted from the V1 baseline (ignoring envDependent tools):"
       printf '%s\n' '--- only in live ---' >&2
-      comm -23 <(printf '%s\n' "$tool_ids_live") <(printf '%s\n' "$tool_ids_fix") >&2 || true
+      comm -23 <(printf '%s\n' "$tool_ids_live") <(printf '%s\n' "$tool_ids_fix") | tee "$work/tool-drift-live.txt" >&2 || true
       printf '%s\n' '--- only in fixture ---' >&2
-      comm -13 <(printf '%s\n' "$tool_ids_live") <(printf '%s\n' "$tool_ids_fix") >&2 || true
+      comm -13 <(printf '%s\n' "$tool_ids_live") <(printf '%s\n' "$tool_ids_fix") | tee "$work/tool-drift-fixture.txt" >&2 || true
     fi
   else
     oqa_v1r_fail "GET /experimental/tool did not return a JSON array"
@@ -219,6 +228,9 @@ oqa_v1r_main() {
     mkdir -p "$OQA_V1_EVIDENCE"
     cp "$work/serve.log" "$OQA_V1_EVIDENCE/v1-serve.log" 2>/dev/null || true
     cp "$work/agents-live.json" "$OQA_V1_EVIDENCE/agents-live.json" 2>/dev/null || true
+    # A failed L-18 keeps its drift lists next to the sandbox serve.log.
+    [ -f "$work/tool-drift-live.txt" ] && cp "$work/tool-drift-live.txt" "$OQA_V1_EVIDENCE/tool-drift-live.txt" 2>/dev/null || true
+    [ -f "$work/tool-drift-fixture.txt" ] && cp "$work/tool-drift-fixture.txt" "$OQA_V1_EVIDENCE/tool-drift-fixture.txt" 2>/dev/null || true
   fi
   # The isolated XDG root is not guaranteed to survive oqa_cleanup's temp-dir
   # sweep, and a surviving V1 host child whose environ still carries the root

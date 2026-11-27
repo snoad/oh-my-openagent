@@ -47,6 +47,8 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/common.sh"
+# The sandbox config is shared with v2-v1-regression.sh (see the lib header).
+. "$SCRIPT_DIR/lib/v2-v1-sandbox-config.sh"
 
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 FIXTURES_DIR="$REPO_ROOT/packages/omo-opencode/src/opencode-v2/parity/fixtures/v1-baseline"
@@ -110,34 +112,10 @@ oqa_v1b_capture() {
   real_db_before="$(oqa_v1b_real_db_receipt "$real_db")"
 
   oqa_mk_isolated_xdg || return 1
-  mkdir -p "$HOME/.omo"
-  # The omo config the live driver writes: the atlas model override plus the
-  # plugin harness keys (hashline edit on, look_at disabled) so the pipeline
-  # embeds the same tool list the live host embeds.
-  cat > "$HOME/.omo/omo.jsonc" <<'JSON'
-{
-  "agents": { "atlas": { "model": "anthropic/claude-sonnet-5" } },
-  "[opencode]": { "hashline_edit": true, "disabled_tools": ["look_at"] }
-}
-JSON
-  mkdir -p "$XDG_CONFIG_HOME/opencode"
-  # The model universe of the live OpenCode 2 parity driver (default model
-  # openai/gpt-fake and its provider block); the baseURL is never dialed
-  # during the capture (GET /agent + GET /experimental/tool only).
-  cat > "$XDG_CONFIG_HOME/opencode/opencode.jsonc" <<JSON
-{
-  "model": "openai/gpt-fake",
-  "plugin": ["file://$REPO_ROOT"],
-  "provider": {
-    "openai": {
-      "options": { "apiKey": "fake-key", "baseURL": "http://127.0.0.1:9/v1" },
-      "models": {
-        "gpt-fake": { "tool_call": true, "limit": { "context": 200000, "output": 8192 } }
-      }
-    }
-  }
-}
-JSON
+  # The committed fixtures and the L-18 comparison must see the same config
+  # or the tool list drifts by construction: both scripts write through the
+  # shared lib (lib/v2-v1-sandbox-config.sh).
+  oqa_v1_write_sandbox_config "$REPO_ROOT"
 
   local neutral="$OQA_XDG_ROOT/neutral"
   mkdir -p "$neutral"
