@@ -138,6 +138,13 @@ export const V2_LIMITS: V2Limit[] = [
     reason: "expanded MCP environment values exposed through the MCP API",
   },
   {
+    id: "LIM-21",
+    status: "candidate",
+    is: ["IS-5", "IS-13"],
+    reason:
+      "V1 provider model entries the OpenCode 2 model schema cannot express: the V1 per-model cost object and the per-model provider.npm override have no OpenCode 2 model-info counterpart, so catalog entries register without them and entries that carry none of the expressible fields (name, limit, modalities, tool_call, temperature, options, headers) are skipped with one log line naming the entry (task 28)",
+  },
+  {
     id: "VL-1",
     status: "candidate",
     is: ["IS-14", "IS-13"],

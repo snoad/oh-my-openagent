@@ -9,7 +9,14 @@ import {
   type FakeListEnvelope,
   type FakeLocationRef,
 } from "./fake-v2-editors"
+import { createModelEditor, type FakeModelDomain, type FakeModelEditor } from "./fake-v2-model-domain"
 import type { FakeHookRegistry, FakeRegistration } from "./fake-v2-registry"
+
+// Provider editor domain for the fake OpenCode 2 plugin context, task 9 of
+// the opencode-v2-compat plan. Local structural mirror of the pinned
+// node_modules/@opencode/plugin 2.4.1 ProviderRecord / ProviderEditor: the
+// provider editor owns the provider records with their model maps. The model
+// editor domain lives in fake-v2-model-domain.ts and shares the stores.
 
 export type FakeProviderInfo = { id: string; name: string; [key: string]: unknown }
 
@@ -45,26 +52,7 @@ export interface FakeProviderDomain {
   reload(): Promise<void>
 }
 
-export type FakeModelEditor = {
-  list(providerID?: string): FakeModelInfo[]
-  get(providerID: string, modelID: string): FakeModelInfo | undefined
-  update(providerID: string, modelID: string, update: (model: FakeModelInfo) => void): void
-  remove(providerID: string, modelID: string): void
-  readonly default: {
-    get(): { providerID: string; modelID: string } | undefined
-    set(providerID: string, modelID: string): void
-  }
-  readonly provider: { list(): FakeProviderRecord[]; get(providerID: string): FakeProviderRecord | undefined }
-}
-
-export interface FakeModelDomain {
-  list(input?: { readonly location?: { readonly directory?: string } }): Promise<FakeListEnvelope<FakeModelInfo>>
-  default(input?: {
-    readonly location?: { readonly directory?: string }
-  }): Promise<{ readonly location: FakeLocationRef; readonly data: FakeModelInfo | null }>
-  transform(callback: (editor: FakeModelEditor) => void): Promise<FakeRegistration>
-  reload(): Promise<void>
-}
+export type { FakeModelEditor, FakeModelDomain } from "./fake-v2-model-domain"
 
 // Store twin of FakeProviderRecord: mutable model map the editor writes through; the public mirror stays ReadonlyMap.
 type ProviderStoreRecord = {
@@ -73,7 +61,7 @@ type ProviderStoreRecord = {
   sourceConnection?: Record<string, unknown>
 }
 
-type ProviderStores = {
+export type ProviderStores = {
   readonly records: Map<string, ProviderStoreRecord>
   readonly models: FakeModelInfo[]
   defaultModel: { providerID: string; modelID: string } | undefined
@@ -113,39 +101,6 @@ function createProviderEditor(stores: ProviderStores): FakeProviderEditor {
       remove: (providerID, modelID) => {
         stores.records.get(providerID)?.models.delete(modelID)
       },
-    },
-  }
-}
-
-function createModelEditor(stores: ProviderStores): FakeModelEditor {
-  return {
-    list: (providerID?: string) =>
-      providerID === undefined
-        ? [...stores.models]
-        : [
-            ...(stores.records.get(providerID)?.models.values() ?? []),
-            ...stores.models.filter((m) => m.providerID === providerID),
-          ],
-    get: (providerID, modelID) =>
-      stores.models.find((model) => model.providerID === providerID && model.modelID === modelID) ??
-      stores.records.get(providerID)?.models.get(modelID),
-    update: (providerID, modelID, update) => {
-      const model = stores.models.find((c) => c.providerID === providerID && c.modelID === modelID)
-      if (model) update(model)
-    },
-    remove: (providerID, modelID) => {
-      const index = stores.models.findIndex((model) => model.providerID === providerID && model.modelID === modelID)
-      if (index >= 0) stores.models.splice(index, 1)
-    },
-    default: {
-      get: () => stores.defaultModel,
-      set: (providerID, modelID) => {
-        stores.defaultModel = { providerID, modelID }
-      },
-    },
-    provider: {
-      list: () => [...stores.records.values()],
-      get: (providerID) => stores.records.get(providerID),
     },
   }
 }

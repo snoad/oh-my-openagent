@@ -11,6 +11,7 @@ import { registerCompactionHookAdapters } from "../hooks/adapt-compaction-hooks"
 import { registerIdleContinuationAdapter } from "../hooks/adapt-idle-continuation"
 import { createPlanSource } from "../registration/plan-source"
 import type { PlanSourceContext } from "../registration/plan-source-context"
+import { v2ProviderModelAdapterRegistration } from "./provider-model-adapter"
 import { markHook } from "./hook-markers"
 import type { V2Runtime } from "./stop-v2-runtime"
 import type { V2RuntimePluginContext } from "./start-v2-runtime"
@@ -153,4 +154,5 @@ export const v2AdapterRegistrations: readonly V2AdapterRegistration[] = [
   v2CompactionHooksAdapterRegistration,
   v2IdleContinuationAdapterRegistration,
   v2PlanSourceAdapterRegistration,
+  v2ProviderModelAdapterRegistration,
 ]
