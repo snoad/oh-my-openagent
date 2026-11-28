@@ -21,7 +21,7 @@ import { createV2ClientShim } from "../client/v2-client-shim"
 let bootCounter = 0
 
 function inlinePlanSource(): TodoToolPlanSource & { readonly recompute: () => Promise<void> } {
-  const steps: Array<{ run: () => void | Promise<void> }> = []
+  const steps: Array<{ run: (input: { readonly apply: boolean }) => void | Promise<void> }> = []
   const ownToolMarkers = new Map<string, string>()
   return {
     registerStep: (step) => {
@@ -31,7 +31,7 @@ function inlinePlanSource(): TodoToolPlanSource & { readonly recompute: () => Pr
       for (const [id, description] of entries) ownToolMarkers.set(id, description)
     },
     recompute: async () => {
-      for (const step of steps) await step.run()
+      for (const step of steps) await step.run({ apply: true })
     },
   }
 }

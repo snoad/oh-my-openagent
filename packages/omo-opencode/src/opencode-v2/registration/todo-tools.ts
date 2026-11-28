@@ -135,7 +135,7 @@ export type TodoToolPlanSource = {
   readonly registerStep: (step: {
     readonly id: string
     readonly domain: "tool"
-    readonly run: () => void | Promise<void>
+    readonly run: (input: { readonly apply: boolean }) => void | Promise<void>
   }) => void
   readonly addOwnToolMarkers: (entries: ReadonlyArray<readonly [string, string]>) => void
 }
@@ -168,12 +168,16 @@ export function registerTodoTools(ctx: TodoToolExecuteContext, planSource: TodoT
   // recompute applies both registrations in one complete pass. The gate
   // decision is evaluated once against ctx.tool.list() (the host list at
   // registration time); after the plugin registered its own todowrite the
-  // list can no longer distinguish host from plugin entries.
+  // list can no longer distinguish host from plugin entries. Like every
+  // plan step it writes only while the plan moves (apply), because the host
+  // hands a settled recompute's transform the live editor and re-adding the
+  // entries would register a fresh transform callback per pass.
   let decided = false
   planSource.registerStep({
     id: STEP_ID,
     domain: "tool",
-    run: async () => {
+    run: async (input) => {
+      if (input.apply !== true) return
       if (!decided) {
         const hosted = await ctx.tool.list()
         decided = true

@@ -37,11 +37,11 @@ export type HostStateSnapshot = {
   get(): Promise<V1ConfigProjection>
   refresh(): Promise<void>
   record(value: SnapshotRecordValue): void
-  // True when at least one record() since the last consume stored a value
-  // that deep-differs from that domain's previous record: the plan source's
-  // bounded continuation signal (the recorded base moved, so the next
-  // recompute must reconcile the plan against it).
-  consumeRecordChanges(): boolean
+  // The domains whose record() since the last consume stored a value that
+  // deep-differs from that domain's previous record (the set is cleared on
+  // consume): the plan source's bounded continuation signal (the recorded
+  // base moved, so the next recompute must reconcile the plan against it).
+  consumeRecordChanges(): ReadonlySet<SnapshotDomain>
 }
 
 export type HostStateSnapshotOptions = {
@@ -164,8 +164,8 @@ export function createHostStateSnapshot(ctx: SnapshotContext, options?: HostStat
       recorded.set(value.domain, next)
       cache = undefined
     },
-    consumeRecordChanges() {
-      const changed = changedRecordDomains.size > 0
+    consumeRecordChanges(): ReadonlySet<SnapshotDomain> {
+      const changed = new Set(changedRecordDomains)
       changedRecordDomains.clear()
       return changed
     },

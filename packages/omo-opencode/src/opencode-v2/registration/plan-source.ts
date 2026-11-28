@@ -3,11 +3,11 @@
 // a host config change or the provider catalog landing (model/provider
 // updated, the host's registry re-resolve), plus a bounded post-startup
 // continuation when a record pass caught a foreign host change.
-
 import { log } from "../../shared"
 
 import { subscribeV2RawEvents, type V2EventSubscription } from "../events/subscribe-v2-events"
 import { armDebounceWindow, defaultPlanScheduler, drainArmedWindows, type ArmedDebounce } from "./plan-source-debounce"
+import { createRecordContinuation, MAX_RECORD_CONTINUATION_ROUNDS } from "./plan-source-continuation"
 import { changedPlanDomains, noopPlanOf } from "./plan-diff"
 import { isRegistrationDigestEnabled, logRecomputeDigest } from "./plan-digest"
 import { createPlanStepRegistry, type PlanStepDomain, type PlanStepRegistry } from "./plan-steps"
@@ -95,6 +95,7 @@ export async function createPlanSource(
   let startupDrained = false
   const pendingReloads = new Set<PlanDomain>()
   const ownToolMarkers = new Map<string, string>()
+  const recordContinuation = createRecordContinuation(MAX_RECORD_CONTINUATION_ROUNDS, () => scheduleRecompute())
 
   steps.register({
     id: "plan-config-pipeline",
@@ -119,8 +120,6 @@ export async function createPlanSource(
         applying = applying || changedPlanDomains(baseline, currentPlan).length > 0
       }
     }
-    // Past the startup settle boundary a record pass that caught a foreign
-    // host change arms one continuation; a steady host never continues.
     if (currentPlan === undefined) {
       snapshot.consumeRecordChanges()
       return
@@ -136,11 +135,11 @@ export async function createPlanSource(
       }
     }
     lastApplied = currentPlan
-    if (isRegistrationDigestEnabled()) {
-      logRecomputeDigest({ directory: directory ?? "", plan: currentPlan, base, changed, reloadDomains })
-    }
     const recordChanged = snapshot.consumeRecordChanges()
-    if (startupDrained && recordChanged) scheduleRecompute()
+    if (isRegistrationDigestEnabled()) {
+      logRecomputeDigest({ directory: directory ?? "", plan: currentPlan, base, changed, reloadDomains, recordChanged })
+    }
+    if (startupDrained) recordContinuation.onPass(recordChanged)
   }
 
   const enqueue = (run: () => Promise<void>): Promise<void> => {

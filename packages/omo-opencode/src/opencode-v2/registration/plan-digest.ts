@@ -60,6 +60,7 @@ export type RecomputeDigestInput = {
   readonly base: V1ConfigProjection
   readonly changed: readonly PlanDomain[]
   readonly reloadDomains: ReadonlySet<PlanDomain>
+  readonly recordChanged: ReadonlySet<string>
 }
 
 // One line per recompute: which sections moved, their digests, and the base
@@ -72,6 +73,7 @@ export function logRecomputeDigest(input: RecomputeDigestInput): void {
     `dir=${dir}`,
     `changed=${input.changed.length > 0 ? input.changed.join(",") : "none"}`,
     `reload=${input.reloadDomains.size > 0 ? [...input.reloadDomains].join(",") : "none"}`,
+    `rec=${input.recordChanged.size > 0 ? [...input.recordChanged].join(",") : "none"}`,
     `A d=${plan.defaultAgent ?? "-"} ${sectionDigest("", plan.agents).trimStart()}`,
     `T n=${String(Object.keys(plan.tools).length)} H${digestOf(plan.tools)}`,
     sectionDigest("M", plan.mcp),
