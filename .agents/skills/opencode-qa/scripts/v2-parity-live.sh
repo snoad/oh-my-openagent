@@ -1121,8 +1121,8 @@ done
 # The self-test runs the runner against the stub API only, so it dispatches
 # BEFORE the sandbox library boots the pinned OC2 binary.
 if [ "$SELF_TEST" -eq 1 ]; then
-  bash "$SCRIPT_DIR/lib/v2-live-self-test.sh"
-  exit $?
+  # exec so a signal sent to this entry point reaches the self-test itself, whose EXIT trap cleans up instead of leaving an orphan
+  exec bash "$SCRIPT_DIR/lib/v2-live-self-test.sh"
 fi
 
 . "$SCRIPT_DIR/lib/v2-sandbox.sh"
@@ -1134,10 +1134,11 @@ oqa_pl_on_exit() {
   oqa_v2_teardown
   [ -n "$WORK_DIR" ] && rm -rf "$WORK_DIR"
 }
-# bash does not run EXIT traps on untrapped fatal signals; route them through
-# exit so the teardown chain (sandbox + WORK_DIR removal) always runs. The
-# registration sits AFTER the --self-test dispatch and the sandbox sourcing
-# (oqa_v2_teardown must exist), so the self-test run never arms this trap.
+# These traps defer the exit until the current foreground command finishes, then
+# exit with that status, so a fatal signal still runs the teardown chain
+# (sandbox + WORK_DIR removal). The registration sits AFTER the --self-test
+# dispatch and the sandbox sourcing (oqa_v2_teardown must exist), so the
+# self-test run never arms this trap.
 trap oqa_pl_on_exit EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
