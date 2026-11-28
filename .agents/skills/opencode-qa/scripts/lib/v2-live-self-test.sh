@@ -775,73 +775,147 @@ driver_tests() {
   fi
   unset OQA_PL_PLUGIN_BUNDLE OQA_PL_RELOAD_POLL_SECS
 
-  # 6g-bis. registration idle window (the PR #4 convergence pin): PASS on a
-  # quiet host, FAIL when a reload event hits the wire, FAIL when a recompute
-  # lands in the plugin log. The window length is shrunk for the self-test and
-  # the endpoints are real SSE streams (a non-streaming response would end
-  # the window instantly, the live phase streams /api/event).
-  local idledir hb_port hb_pid ev_port ev_pid app_pid fails_before
+  # 6g-bis. registration idle window (the PR #4 convergence pin, quiet-tail
+  # rule): PASS on a quiet host, PASS when events only land in the first half
+  # (one absorbed late host change), FAIL on an event in the last half, FAIL
+  # on a reload-relevant plugin write in the last half. Every case asserts on
+  # the message text AND on the saved digest (idle-window.txt) and capture
+  # (idle-window.sse). The window length is shrunk for the self-test and the
+  # endpoints are real SSE streams (a non-streaming response would end the
+  # window instantly, the live phase streams /api/event).
+  local idledir ev_port ev_pid app_pid fails_before out rc
   mkdir -p "$TMP/dtidle"
   idledir="$TMP/dtidle"
   EV_LIVE="$idledir"
   OQA_PL_IDLE_WINDOW_SECS=2
-  printf '[ts] [opencode-v2] tool-registration: registered 14 plugin tools in 1ms\n' > "$idledir/plugin.log"
+  # SSE stub: sends each "type@seconds" event of the comma schedule once,
+  # then heartbeats every 100 ms keep the stream open (a non-streaming
+  # response would end the window instantly).
   sse_server() {
-    node -e 'const http=require("http");const kind=process.argv[1];const body=kind==="events"?"data: {\"type\":\"provider.updated\"}\n\n":"data: {\"type\":\"heartbeat\"}\n\n";const s=http.createServer((req,res)=>{res.writeHead(200,{"Content-Type":"text/event-stream"});const t=setInterval(()=>res.write(body),100);res.on("close",()=>clearInterval(t))});s.listen(Number(process.argv[2]))' "$1" "$2" &
+    node -e '
+      const http = require("http");
+      const port = Number(process.argv[1]);
+      const sched = (process.argv[2] || "").split(",").filter(Boolean).map((s) => {
+        const [type, at] = s.split("@");
+        return { type, at: Number(at) * 1000 };
+      });
+      const srv = http.createServer((req, res) => {
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        const timers = sched.map((ev) => setTimeout(
+          () => res.write(`data: {"type":"${ev.type}","data":{"location":{"directory":"stub-loc"}}}\n\n`),
+          ev.at,
+        ));
+        const hb = setInterval(() => res.write("data: {\"type\":\"heartbeat\"}\n\n"), 100);
+        res.on("close", () => { timers.forEach(clearTimeout); clearInterval(hb); });
+      });
+      srv.listen(port);
+    ' "$1" "$2" &
   }
-  hb_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null || printf '41001')"
-  sse_server heartbeat "$hb_port"
-  hb_pid=$!
-  for i in $(seq 1 40); do
-    curl -sf -m 1 "http://127.0.0.1:$hb_port/api/event" >/dev/null 2>&1 && break
-    kill -0 "$hb_pid" 2>/dev/null || break
-    sleep 0.25
-  done
+  wait_sse() {
+    local port="$1" pid="$2" i
+    for i in $(seq 1 20); do
+      kill -0 "$pid" 2>/dev/null || return 1
+      curl -s -m 1 -o /dev/null "http://127.0.0.1:$port/api/event" 2>/dev/null
+      # rc 0 or 28 (the -m cutoff on an open stream) both prove the listener
+      # is up; a refused connection retries.
+      case "$?" in 0|28) return 0 ;; esac
+      sleep 0.25
+    done
+    return 1
+  }
+  start_sse() {
+    local port pid
+    port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null || printf '41001')"
+    sse_server "$port" "$1"
+    pid=$!
+    wait_sse "$port" "$pid" || { kill "$pid" 2>/dev/null || true; return 1; }
+    printf '%s %s\n' "$port" "$pid"
+  }
+  idle_run() {
+    # File redirection, not command substitution: $() runs the pin in a
+    # subshell and the shared FAILS increment of oqa_pl_fail would be lost.
+    oqa_pl_idle_window_convergence "$1" "$2" "$3" > "$TMP/idle-msg.out" 2>&1
+  }
+
+  # case 1: quiet window -> PASS with 0/0 in both halves and a saved capture.
+  printf '[ts] [opencode-v2] tool-registration: registered 14 plugin tools in 1ms\n' > "$idledir/plugin.log"
+  read -r ev_port ev_pid < <(start_sse "") || { oqa_st_fail "idle case 1: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
   fails_before=$FAILS
-  if oqa_pl_idle_window_convergence "$idledir/plugin.log" "http://127.0.0.1:$hb_port/api/event" "stub-pass" \
-     && [ $((FAILS - fails_before)) -eq 0 ]; then
-    oqa_st_pass "driver: idle window PASSes on a quiet host (no events, no recomputes)"
+  idle_run "$idledir/plugin.log" "http://127.0.0.1:$ev_port/api/event" "stub-pass"; rc=$?
+  out="$(cat "$TMP/idle-msg.out" 2>/dev/null || true)"
+  if [ "$rc" -eq 0 ] && [ $((FAILS - fails_before)) -eq 0 ] \
+     && printf '%s' "$out" | grep -qF 'registration idle window (2s): last 1s quiet' \
+     && printf '%s' "$out" | grep -qF 'registration converged' \
+     && [ -s "$idledir/idle-window.sse" ] \
+     && grep -qF 'verdict=PASS' "$idledir/idle-window.txt" \
+     && grep -qF 'events_last_half=0' "$idledir/idle-window.txt" \
+     && grep -qF 'plugin_writes_last_half=0' "$idledir/idle-window.txt"; then
+    oqa_st_pass "driver: idle window PASSes on a quiet host and saves the capture + digest"
   else
-    bad "driver: idle window failed on a quiet host"
+    bad "driver: idle window failed on a quiet host (rc=$rc out=$out)"
   fi
 
-  ev_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null || printf '41002')"
-  sse_server events "$ev_port"
-  ev_pid=$!
-  for i in $(seq 1 40); do
-    curl -sf -m 1 "http://127.0.0.1:$ev_port/api/event" >/dev/null 2>&1 && break
-    kill -0 "$ev_pid" 2>/dev/null || break
-    sleep 0.25
-  done
+  # case 2: events only in the first half (one absorbed late host change) -> PASS.
+  read -r ev_port ev_pid < <(start_sse "provider.updated@0.2,model.updated@0.4") || { oqa_st_fail "idle case 2: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
   fails_before=$FAILS
-  if oqa_pl_idle_window_convergence "$idledir/plugin.log" "http://127.0.0.1:$ev_port/api/event" "stub-pass"; then
-    bad "driver: idle window passed although reload events streamed"
+  idle_run "$idledir/plugin.log" "http://127.0.0.1:$ev_port/api/event" "stub-pass"; rc=$?
+  out="$(cat "$TMP/idle-msg.out" 2>/dev/null || true)"
+  if [ "$rc" -eq 0 ] && [ $((FAILS - fails_before)) -eq 0 ] \
+     && printf '%s' "$out" | grep -qF 'registration converged' \
+     && grep -qF 'events_first_half=2' "$idledir/idle-window.txt" \
+     && grep -qF 'events_last_half=0' "$idledir/idle-window.txt" \
+     && grep -qF 'event ' "$idledir/idle-window.txt" \
+     && grep -qF 'provider.updated' "$idledir/idle-window.txt" \
+     && grep -qF 'stub-loc' "$idledir/idle-window.txt"; then
+    oqa_st_pass "driver: idle window PASSes when events only land in the first half (digest names type + location)"
   else
-    if [ $((FAILS - fails_before)) -eq 1 ]; then
-      oqa_st_pass "driver: idle window FAILs truthfully when reload events stream"
-    else
-      bad "driver: idle window events-case did not report the failure truthfully"
-    fi
+    bad "driver: idle window failed on a first-half-only event burst (rc=$rc out=$out)"
   fi
   kill "$ev_pid" 2>/dev/null || true
   wait "$ev_pid" 2>/dev/null || true
 
-  printf 'seed\n' > "$idledir/growing.log"
-  ( sleep 0.5; printf '[ts] [opencode-v2] tool-registration: registered 14 plugin tools\n' >> "$idledir/growing.log" ) &
+  # case 3: one counted event in the last half -> FAIL with the digest naming it.
+  read -r ev_port ev_pid < <(start_sse "command.updated@1.4") || { oqa_st_fail "idle case 3: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
+  fails_before=$FAILS
+  idle_run "$idledir/plugin.log" "http://127.0.0.1:$ev_port/api/event" "stub-pass"; rc=$?
+  out="$(cat "$TMP/idle-msg.out" 2>/dev/null || true)"
+  if [ "$rc" -ne 0 ] && [ $((FAILS - fails_before)) -eq 1 ] \
+     && printf '%s' "$out" | grep -qF 'registration idle window (2s): last 1s not quiet' \
+     && printf '%s' "$out" | grep -qF '(events first half: 0, last half: 1; plugin writes first half: 0, last half: 0)' \
+     && printf '%s' "$out" | grep -qF 'registration did not converge' \
+     && grep -qF 'verdict=FAIL' "$idledir/idle-window.txt" \
+     && grep -qF 'events_last_half=1' "$idledir/idle-window.txt" \
+     && grep -qF 'command.updated' "$idledir/idle-window.txt" \
+     && [ -s "$idledir/idle-window.sse" ]; then
+    oqa_st_pass "driver: idle window FAILs truthfully on a last-half event and the digest names it"
+  else
+    bad "driver: idle window events-case did not fail truthfully (rc=$rc out=$out)"
+  fi
+  kill "$ev_pid" 2>/dev/null || true
+  wait "$ev_pid" 2>/dev/null || true
+
+  # case 4: one reload-relevant plugin write in the last half -> FAIL and the
+  # digest quotes the gained line.
+  read -r ev_port ev_pid < <(start_sse "") || { oqa_st_fail "idle case 4: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
+  printf 'seed\n' > "$idledir/plugin.log"
+  ( sleep 1.3; printf '[%s] [opencode-v2] tool-registration: registered 14 plugin tools in 1ms\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$idledir/plugin.log" ) &
   app_pid=$!
   fails_before=$FAILS
-  if oqa_pl_idle_window_convergence "$idledir/growing.log" "http://127.0.0.1:$hb_port/api/event" "stub-pass"; then
-    bad "driver: idle window passed although a recompute landed in the plugin log"
-  else
-    if [ $((FAILS - fails_before)) -eq 1 ]; then
-      oqa_st_pass "driver: idle window FAILs truthfully when a recompute lands"
-    else
-      bad "driver: idle window recompute-case did not report the failure truthfully"
-    fi
-  fi
+  idle_run "$idledir/plugin.log" "http://127.0.0.1:$ev_port/api/event" "stub-pass"; rc=$?
+  out="$(cat "$TMP/idle-msg.out" 2>/dev/null || true)"
   wait "$app_pid" 2>/dev/null || true
-  kill "$hb_pid" 2>/dev/null || true
-  wait "$hb_pid" 2>/dev/null || true
+  if [ "$rc" -ne 0 ] && [ $((FAILS - fails_before)) -eq 1 ] \
+     && printf '%s' "$out" | grep -qF '(events first half: 0, last half: 0; plugin writes first half: 0, last half: 1)' \
+     && printf '%s' "$out" | grep -qF 'registration did not converge' \
+     && grep -qF 'verdict=FAIL' "$idledir/idle-window.txt" \
+     && grep -qF 'plugin_writes_last_half=1' "$idledir/idle-window.txt" \
+     && grep -qF 'tool-registration: registered' "$idledir/idle-window.txt"; then
+    oqa_st_pass "driver: idle window FAILs truthfully on a last-half plugin write and the digest quotes the line"
+  else
+    bad "driver: idle window write-case did not fail truthfully (rc=$rc out=$out)"
+  fi
+  kill "$ev_pid" 2>/dev/null || true
+  wait "$ev_pid" 2>/dev/null || true
   unset OQA_PL_IDLE_WINDOW_SECS EV_LIVE
 
   # 6g-ter. V1 baseline recapture: with the switch the driver invokes the

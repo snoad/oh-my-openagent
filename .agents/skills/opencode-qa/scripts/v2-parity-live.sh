@@ -401,26 +401,169 @@ oqa_pl_reload_for_stats() {
 
 # ---- registration convergence idle window (the PR #4 pin) -------------------
 # The host is idle when this runs: every scenario finished and the MCP
-# servers connected. The registration is converged only when the window
-# carries ZERO *.updated reload events on the wire and ZERO further
-# recomputes in the plugin log. The SSE subscription bounds the window
-# itself (curl -m), so no sleep drives it. OQA_PL_IDLE_WINDOW_SECS shrinks
-# the window for the self-test (default 32; the live phase budgets it under
-# the +40s driver cap).
+# servers connected. Convergence means "the registration goes quiet and
+# STAYS quiet": an event burst early in the window can be ONE correct plugin
+# reaction to a late host change (a slow network connects the MCP servers
+# after the scenarios end; three locations times four event types is twelve
+# to thirteen events, then quiet again), so the pass rule is that the LAST
+# HALF of the window carries zero counted *.updated events on the wire AND
+# zero reload-relevant plugin writes in the plugin log. First-half events
+# and writes are tolerated (a late host change being absorbed once). The SSE
+# subscription bounds the window itself (curl -m), so no sleep drives it.
+# OQA_PL_IDLE_WINDOW_SECS shrinks the window for the self-test (default 32;
+# the live phase budgets it under the +40s driver cap).
+#
+# Reload-relevant plugin log lines at HEAD are the write-time log statements
+# of V2/registration/*.ts (record-only recomputes log the plan-source/
+# plan-digest lines and stay excluded; the provider and model appliers of
+# provider-model-apply.ts log no apply line at HEAD, a provider/model reload
+# surfaces through the *.updated events and the other domain lines):
+#   [opencode-v2] tool-registration: registered N plugin tools    (tools.ts)
+#   [opencode-v2] command-registration: registered ...           (commands.ts)
+#   [opencode-v2] mcp-registration: registered N mcp servers        (mcp.ts)
+#   [opencode-v2] agent-registration: replayed N agents          (agents.ts)
+#   [opencode-v2] todo-registration: registered N todo tools (todo-tools.ts)
+#
+# Self-evidencing: the raw SSE capture (every line prefixed with its arrival
+# offset in seconds inside the window) lands in $EV_LIVE/idle-window.sse and
+# the per-half digest (per event type and location with offsets, plus the
+# reload-relevant plugin log lines gained in the last half) in
+# $EV_LIVE/idle-window.txt. The verdict messages quote the digest counts.
+
+oqa_pl_idle_now_ms() {
+  # GNU date gives millisecond precision; anything else falls back to seconds.
+  local t
+  t="$(date +%s%3N 2>/dev/null)"
+  case "$t" in
+    ''|*[!0-9]*) printf '%s000' "$(date +%s)" ;;
+    *) printf '%s' "$t" ;;
+  esac
+}
+
+oqa_pl_idle_iso_ms() {
+  # Epoch ms of the plugin logger's ISO-8601 UTC stamp ("[stamp] message");
+  # 0 means the stamp did not parse (the caller treats the line as
+  # unplaceable and counts it in the last half).
+  local iso="$1" t
+  t="$(date -u -d "$iso" +%s%3N 2>/dev/null)"
+  case "$t" in
+    ''|*[!0-9]*) printf '0' ;;
+    *) printf '%s' "$t" ;;
+  esac
+}
+
+oqa_pl_idle_fmt_ms() {
+  # "-1" sentinel -> "?" (unplaceable), otherwise "S.mmm".
+  local ms="$1"
+  if [ "$ms" -lt 0 ]; then printf '?'; return; fi
+  printf '%d.%03d' "$((ms / 1000))" "$((ms % 1000))"
+}
+
 oqa_pl_idle_window_convergence() {
   local plugin_log="$1" url="$2" pass="$3"
   local window="${OQA_PL_IDLE_WINDOW_SECS:-32}"
-  local before after events
-  before="$(grep -c 'tool-registration: registered' "$plugin_log" 2>/dev/null)"
-  before="${before:-0}"
-  events="$(curl -s -N -m "$window" -u "opencode:$pass" "$url/api/event" 2>/dev/null \
-    | grep -c -E '"type":"(provider|model|agent|command)\.updated"' || true)"
-  after="$(grep -c 'tool-registration: registered' "$plugin_log" 2>/dev/null)"
-  after="${after:-0}"
-  if [ "$events" -eq 0 ] && [ "$after" -eq "$before" ]; then
-    oqa_pl_pass "registration idle window (${window}s): 0 reload events, 0 recomputes (registration converged)"
+  local half=$((window / 2))
+  local half_ms=$((half * 1000))
+  local ev_dir sse_file digest_file
+  ev_dir="${EV_LIVE:-${TMPDIR:-/tmp}}"
+  sse_file="$ev_dir/idle-window.sse"
+  digest_file="$ev_dir/idle-window.txt"
+  mkdir -p "$ev_dir"
+
+  # Byte snapshot BEFORE the window opens: everything the log gains while the
+  # window is open is a candidate write.
+  local before_bytes
+  before_bytes="$(wc -c < "$plugin_log" 2>/dev/null || printf '0')"
+  before_bytes="$(printf '%s' "$before_bytes" | tr -d '[:space:]')"
+
+  # Raw SSE capture: every line prefixed with its arrival offset (s) inside
+  # the window, so the digest can place each counted event in a half.
+  local start_ms line_ms delta line off_s
+  start_ms="$(oqa_pl_idle_now_ms)"
+  : > "$sse_file"
+  while IFS= read -r line; do
+    line_ms="$(oqa_pl_idle_now_ms)"
+    delta=$((line_ms - start_ms))
+    [ "$delta" -lt 0 ] && delta=0
+    printf '%d.%03d\t%s\n' "$((delta / 1000))" "$((delta % 1000))" "$line" >> "$sse_file"
+  done < <(curl -s -N -m "$window" -u "opencode:$pass" "$url/api/event" 2>/dev/null)
+
+  # Count the *.updated events per half; keep type + location + offset for
+  # the digest. The stream is process wide, so the location comes from the
+  # event payload ({"type":..,"data":{"location":{"directory":..}},..}).
+  local ev_first=0 ev_last=0 ev_lines_first="" ev_lines_last=""
+  local off_ms ev_type ev_dir_name ev_line
+  while IFS= read -r line; do
+    printf '%s' "$line" | grep -q -E '"type":"(provider|model|agent|command)\.updated"' || continue
+    off_s="${line%%$'\t'*}"
+    ev_line="${line#*$'\t'}"
+    off_ms="$(printf '%s' "$off_s" | awk '{ printf "%d", ($1 * 1000) }')"
+    ev_type="$(printf '%s' "${ev_line#data: }" | jq -r '.type // "?"' 2>/dev/null || printf '?')"
+    ev_dir_name="$(printf '%s' "${ev_line#data: }" | jq -r '.data.location.directory // "?"' 2>/dev/null || printf '?')"
+    if [ "$off_ms" -ge "$half_ms" ]; then
+      ev_last=$((ev_last + 1))
+      ev_lines_last+="  event ${off_s}s ${ev_type} ${ev_dir_name}"$'\n'
+    else
+      ev_first=$((ev_first + 1))
+      ev_lines_first+="  event ${off_s}s ${ev_type} ${ev_dir_name}"$'\n'
+    fi
+  done < "$sse_file"
+
+  # Classify every plugin log line gained during the window: a reload-
+  # relevant write is any registration write marker (see the list above).
+  # The offset comes from the line's own logger stamp; an unplaceable line
+  # counts in the last half (an unknown place must not pass the pin).
+  local write_re after_bytes wr_first=0 wr_last=0 wr_gained=0
+  write_re='\[opencode-v2\] (tool-registration: registered|command-registration: registered|mcp-registration: registered|agent-registration: replayed|todo-registration: registered)'
+  after_bytes="$(wc -c < "$plugin_log" 2>/dev/null || printf '0')"
+  after_bytes="$(printf '%s' "$after_bytes" | tr -d '[:space:]')"
+  local wr_lines_last="" iso iso_ms wr_off
+  if [ "$after_bytes" -gt "$before_bytes" ] && [ -f "$plugin_log" ]; then
+    while IFS= read -r line; do
+      wr_gained=$((wr_gained + 1))
+      printf '%s' "$line" | grep -qE "$write_re" || continue
+      iso="$(printf '%s' "$line" | sed -n 's/^\[\([^]]*\)\].*/\1/p')"
+      iso_ms="$(oqa_pl_idle_iso_ms "${iso:-}")"
+      if [ "$iso_ms" -le 0 ]; then
+        wr_last=$((wr_last + 1))
+        wr_lines_last+="  write ?s ${line}"$'\n'
+        continue
+      fi
+      wr_off=$((iso_ms - start_ms))
+      [ "$wr_off" -lt 0 ] && wr_off=0
+      if [ "$wr_off" -ge "$half_ms" ]; then
+        wr_last=$((wr_last + 1))
+        wr_lines_last+="  write $(oqa_pl_idle_fmt_ms "$wr_off")s ${line}"$'\n'
+      else
+        wr_first=$((wr_first + 1))
+      fi
+    done < <(tail -c "+$((before_bytes + 1))" "$plugin_log" 2>/dev/null)
+  fi
+
+  local verdict="FAIL"
+  [ "$ev_last" -eq 0 ] && [ "$wr_last" -eq 0 ] && verdict="PASS"
+  {
+    printf '# idle-window digest (PR #4 registration-convergence pin)\n'
+    printf 'window_seconds=%s\n' "$window"
+    printf 'quiet_tail_seconds=%s\n' "$half"
+    printf 'rule=zero counted *.updated events AND zero reload-relevant plugin writes in the LAST half; first-half activity is one absorbed late host change\n'
+    printf 'reload_relevant_markers=tool-registration: registered|command-registration: registered|mcp-registration: registered|agent-registration: replayed|todo-registration: registered\n'
+    printf 'events_first_half=%s\n' "$ev_first"
+    printf 'events_last_half=%s\n' "$ev_last"
+    printf 'plugin_writes_gained_total=%s\n' "$wr_gained"
+    printf 'plugin_writes_first_half=%s\n' "$wr_first"
+    printf 'plugin_writes_last_half=%s\n' "$wr_last"
+    printf 'sse_capture=%s\n' "$sse_file"
+    [ -n "$ev_lines_first" ] && printf 'events_first_half_lines:\n%s' "$ev_lines_first"
+    [ -n "$ev_lines_last" ] && printf 'events_last_half_lines:\n%s' "$ev_lines_last"
+    [ -n "$wr_lines_last" ] && printf 'plugin_writes_last_half_lines:\n%s' "$wr_lines_last"
+    printf 'verdict=%s\n' "$verdict"
+  } > "$digest_file"
+
+  if [ "$verdict" = "PASS" ]; then
+    oqa_pl_pass "registration idle window (${window}s): last ${half}s quiet (events first half: $ev_first, last half: $ev_last; plugin writes first half: $wr_first, last half: $wr_last) (registration converged)"
   else
-    oqa_pl_fail "registration idle window (${window}s): $events reload events, $((after - before)) recomputes (registration did not converge)"
+    oqa_pl_fail "registration idle window (${window}s): last ${half}s not quiet (events first half: $ev_first, last half: $ev_last; plugin writes first half: $wr_first, last half: $wr_last) (registration did not converge)"
   fi
 }
 
