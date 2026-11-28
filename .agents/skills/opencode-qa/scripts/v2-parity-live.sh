@@ -335,8 +335,9 @@ oqa_pl_wait_scenario_model() {
       > "$omo_cache_dir/connected-providers.json"
     printf '%s\n' "{\"models\": {\"openai\": [\"gpt-fake\"]}, \"connected\": [\"openai\"], \"updatedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
       > "$omo_cache_dir/provider-models.json"
-    printf '%s\n' "{\"generatedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"sourceUrl\": \"https://models.dev/api.json\", \"models\": {\"gpt-fake\": {\"id\": \"gpt-fake\", \"name\": \"gpt-fake\", \"family\": \"gpt-fake\", \"reasoning\": false, \"temperature\": true, \"toolCall\": true, \"modalities\": {\"input\": [\"text\"], \"output\": [\"text\"]}, \"limit\": {\"context\": 200000, \"output\": 8192}}}}" \
-      > "$omo_cache_dir/model-capabilities.json"
+    [ -f "${OQA_PL_REAL_HOME:-$HOME}/.cache/oh-my-opencode/model-capabilities.json" ] \
+      && cp -f "${OQA_PL_REAL_HOME:-$HOME}/.cache/oh-my-opencode/model-capabilities.json" \
+        "$omo_cache_dir/model-capabilities.json" 2>/dev/null || true
     oqa_pl_log "omo model caches seeded for the delegate categories and the agent-model bake"
   fi
 
