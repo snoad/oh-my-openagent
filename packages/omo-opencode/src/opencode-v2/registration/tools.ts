@@ -70,7 +70,7 @@ type V2ToolEditor = {
 }
 
 export type ToolRegistrationContext = {
-  readonly planSource: Pick<PlanSource, "registerStep" | "recompute">
+  readonly planSource: Pick<PlanSource, "registerStep" | "recompute" | "addOwnToolMarkers" | "ownToolMarkers">
   readonly tool: {
     readonly transform: (callback: (editor: V2ToolEditor) => void) => Promise<unknown>
   }
@@ -87,6 +87,14 @@ function pristineToolRecordsOf(items: readonly V2ToolEditorItem[]): readonly Pri
     id: item.id,
     ...(item.description === undefined ? {} : { description: item.description }),
   }))
+}
+
+// The own-marker per registered tool id: its own description. The record
+// filter drops an editor item only when BOTH the id and the description
+// match, because host tools share names with plugin tools (grep, glob, task,
+// skill) and only the shadowed copies carry the plugin description.
+function ownToolMarkerOf(name: string, v2: V2ToolDefinition): readonly [string, string] {
+  return [name, v2.description]
 }
 
 function registrationEntryOf(name: string, v2: V2ToolDefinition): V2ToolRegistrationEntry {
@@ -144,18 +152,32 @@ export function registerToolTransform(
   ctx.planSource.registerStep({
     id: STEP_ID,
     domain: "tool",
-    run: async () => {
+    run: async (input) => {
       const startedAt = Date.now()
       await ctx.tool.transform(
         guardReplayEditor("tool-registration", (editor) => {
-          snapshot.record({ domain: "tool", value: pristineToolRecordsOf(editor.list()) })
-          for (const [name, v2] of v2Tools) applyToolToEditor(name, v2, editor)
+          // The record must exclude the tools this runtime registered: the
+          // real host hands the replay a value that already contains them
+          // (both the registration-time apply and the post-mutation rebuild
+          // do), and an unfiltered record makes every round's plan differ
+          // from the last applied one, reloading forever.
+          const ownMarkers = ctx.planSource.ownToolMarkers
+          snapshot.record({
+            domain: "tool",
+            value: pristineToolRecordsOf(editor.list().filter((item) => ownMarkers.get(item.id) !== item.description)),
+          })
+          if (input.apply === true) {
+            for (const [name, v2] of v2Tools) applyToolToEditor(name, v2, editor)
+          }
           return editor
         }),
       )
-      await refreshToolSnippets(engine, v2Tools)
-      log(`${LOG_MARKER}: registered ${String(v2Tools.size)} plugin tools in ${String(Date.now() - startedAt)}ms`)
+      if (input.apply === true) {
+        await refreshToolSnippets(engine, v2Tools)
+        log(`${LOG_MARKER}: registered ${String(v2Tools.size)} plugin tools in ${String(Date.now() - startedAt)}ms`)
+      }
     },
   })
+  ctx.planSource.addOwnToolMarkers([...v2Tools].map(([name, v2]) => ownToolMarkerOf(name, v2)))
   return ctx.planSource.recompute()
 }

@@ -110,7 +110,10 @@ async function checkMcpReplaySettles(): Promise<void> {
     expect(await serverList(ctx)).toEqual(afterFirst)
     expect(listCount()).toBe(listAfterFirst)
     const base = await source.snapshot.get()
-    expect(Object.keys(base.mcp)).toEqual(["websearch"])
+    // The record filters the servers this runtime wrote itself (they re-enter
+    // through every replay), so the settled base keeps only foreign state and
+    // the plan's mcp section never shifts shape across the settled rounds.
+    expect(Object.keys(base.mcp)).toEqual([])
   } finally {
     await source.subscription.stop()
   }

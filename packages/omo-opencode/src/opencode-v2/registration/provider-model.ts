@@ -75,7 +75,7 @@ export type ProviderModelContext = {
 export type ProviderModelPlanStep = {
   readonly id: string
   readonly domain: "provider" | "model"
-  readonly run: (input: { readonly plan?: RegistrationPlan }) => Promise<void>
+  readonly run: (input: { readonly plan?: RegistrationPlan; readonly apply: boolean }) => Promise<void>
 }
 
 export type ProviderModelRegistrationOptions = {
@@ -99,13 +99,20 @@ export async function registerProviderModelTransforms(
     else options.onUnsupportedEntry(entry)
   }
 
+  // The replays no longer record the editor state into the snapshot: the
+  // provider and model editors list the whole models.dev catalog (329
+  // providers / 9218 models on the live host), while the task-22 base mirrors
+  // the V1 CONFIG surface (ctx.provider.list() and ctx.model.list()), and a
+  // catalog-recorded base made every plan carry the full catalog so the apply
+  // rewrote thousands of model mirrors per reload, blocking the host event
+  // loop (the wave-3 run-b CLI timeout). The API fallback read in the
+  // snapshot is the correct pristine base for both domains and reflects
+  // foreign host changes directly.
   const providerReplay = guardReplayEditor("provider-model:provider", (editor: ProviderRegistrationEditor) => {
-    snapshot.record({ domain: "provider", value: providerRecordsOf(editor) })
     applyProviderContributions(editor, getPlan()?.provider, reportUnsupported)
     return editor
   })
   const modelReplay = guardReplayEditor("provider-model:model", (editor: ModelRestrictionEditor) => {
-    snapshot.record({ domain: "model", value: modelStateOf(editor) })
     applyModelRestrictionsAndOverrides(editor, getPlan(), reportUnsupported)
     return editor
   })
@@ -113,18 +120,20 @@ export async function registerProviderModelTransforms(
   const providerStep: ProviderModelPlanStep = {
     id: "v2-provider-contributions",
     domain: "provider",
-    run: async () => {
+    run: async (input) => {
+      if (input.apply !== true) return
       await ctx.provider.transform(providerReplay)
     },
   }
   const modelStep: ProviderModelPlanStep = {
     id: "v2-model-contributions",
     domain: "model",
-    run: async () => {
+    run: async (input) => {
+      if (input.apply !== true) return
       await ctx.model.transform(modelReplay)
     },
   }
   const steps: readonly [ProviderModelPlanStep, ProviderModelPlanStep] = [providerStep, modelStep]
-  for (const step of steps) await step.run({ plan: getPlan() })
+  for (const step of steps) await step.run({ plan: getPlan(), apply: true })
   return steps
 }

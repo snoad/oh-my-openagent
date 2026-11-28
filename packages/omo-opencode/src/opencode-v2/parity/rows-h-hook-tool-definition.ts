@@ -46,8 +46,10 @@ async function checkToolDefinitionRefresh(): Promise<void> {
     registerStep: (step: PlanStep) => {
       registered.push(step)
     },
+    addOwnToolMarkers: () => undefined,
+    ownToolMarkers: new Map<string, string>(),
     recompute: async () => {
-      for (const step of registered) await step.run({ ctx, engine, snapshot, base, plan: undefined })
+      for (const step of registered) await step.run({ ctx, engine, snapshot, base, plan: undefined, apply: true })
     },
   }
   await registerToolTransform(

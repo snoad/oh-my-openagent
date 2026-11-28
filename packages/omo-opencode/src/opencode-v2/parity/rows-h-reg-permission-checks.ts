@@ -125,10 +125,10 @@ export async function checkUnmappedReportedOnce(): Promise<void> {
     expect(patterns.length, "the plan carries glob tool rules").toBeGreaterThan(0)
     const reported: string[] = []
     const step = permissionStep({ onUnmapped: (pattern) => reported.push(pattern) })
-    await step.run({ plan } as Parameters<typeof step.run>[0])
+    await step.run({ plan, apply: true } as Parameters<typeof step.run>[0])
     const firstRun = [...reported]
     expect(firstRun.sort()).toEqual([...patterns].sort())
-    await step.run({ plan } as Parameters<typeof step.run>[0])
+    await step.run({ plan, apply: true } as Parameters<typeof step.run>[0])
     expect(reported, "each distinct pattern reports exactly once").toEqual(firstRun)
   } finally {
     await booted.runtime.stop()

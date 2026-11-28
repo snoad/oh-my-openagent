@@ -227,10 +227,11 @@ describe("registerMcpTransform over the real engine", () => {
       const reloadCount = (): number => ctx.__calls.filter((call) => call.op === "mcp.reload").length
       const listAfterFirst = listCount()
 
-      // when: the reload-triggered recomputes. The recorded base moves from
-      // the pristine empty editor to the registered configs, so the plan's
-      // mcp section shifts shape exactly once (added entries become modified
-      // entries) before the recompute settles.
+      // when: the reload-triggered recomputes. The record excludes the
+      // servers this runtime wrote itself, so the recorded base stays the
+      // pristine empty editor state and the plan's mcp section never shifts
+      // shape (the convergence contract: consecutive recomputes produce
+      // deep-equal plans, so the reload chain stops).
       await source.recompute()
       await source.idle()
       await source.recompute()
@@ -250,10 +251,11 @@ describe("registerMcpTransform over the real engine", () => {
       expect(listCount()).toBe(listAfterFirst)
       expect(reloadCount()).toBe(reloadAfterSettle)
       // then: the base mcp map comes from the recorded pre-transform editor
-      // state (the settled replays record the registered configs), never
-      // from a ctx mcp re-read; the list count assertion above pins that
+      // state with this runtime's own servers filtered out (they re-enter
+      // through every replay), never from a ctx mcp re-read; the list count
+      // assertion above pins that
       const base = await source.snapshot.get()
-      expect(Object.keys(base.mcp).sort()).toEqual(["cc-probe", "user-off", "websearch"])
+      expect(Object.keys(base.mcp).sort()).toEqual([])
       // then: the user enabled:false entry registered as disabled
       expect(afterFirst.get("user-off")).toEqual({ type: "remote", url: "https://user.example", disabled: true })
       // then: the cc-probe environment landed literally (no by-name binding on 2.4.1)

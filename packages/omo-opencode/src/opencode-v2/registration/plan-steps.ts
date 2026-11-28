@@ -20,6 +20,11 @@ export type PlanStepRunInput = {
   readonly snapshot: HostStateSnapshot
   readonly base: V1ConfigProjection
   readonly plan?: RegistrationPlan
+  // False on a settled recompute: the step still records its pristine base
+  // (that read is what detects a foreign host change) but must not write the
+  // editors, because the host republishes the mutations as *.updated events
+  // and would arm the debounce forever (the wave-3 echo loop).
+  readonly apply: boolean
 }
 
 export type PlanStep = {

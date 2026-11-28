@@ -22,24 +22,34 @@ import type { PlanStep } from "./plan-steps"
 const AGENT_STEP_ID = "agent-registration"
 const LOG_MARKER = "[opencode-v2] agent-registration"
 
-// Records the pristine editor value before any edit. Ids this runtime created
-// (the plan's added section) are filtered out: the host hands the transform a
-// fresh value that contains them after a reload, while the fake editor keeps
-// live mutations in place, so the filter is what keeps the recorded base free
-// of the plugin's own output on both surfaces. Host agents the step only
-// updated (the name_only entries) stay base material: filtering them too made
-// every re-record shrink the base until their plan entries vanished (surfaced
-// by the task-27 command step's extra recompute). The default the runtime
-// applied itself is neutralized for the same reason.
+// Records the pristine editor value before any edit. Items this runtime
+// created (the plan's added section) are filtered out: the host hands the
+// transform a value that contains them after a reload, in id forms that vary
+// between the live mutated registry and the rebuilt one (live captured both
+// the canonical id and the display-key id), so the filter matches the id AND
+// the name against BOTH the canonical id and the raw plan key. Host agents
+// the step only updated (the name_only entries) stay base material: filtering
+// them too made every re-record shrink the base until their plan entries
+// vanished (surfaced by the task-27 command step's extra recompute). The
+// default the runtime applied itself is neutralized in the same two forms.
+function ownAgentItemOf(item: AgentReplayItem, own: ReadonlySet<string>): boolean {
+  if (own.has(item.id)) return true
+  const name = typeof item.name === "string" ? item.name : undefined
+  return name !== undefined && own.has(name)
+}
+
 function recordPristineAgents(
   editor: AgentReplayEditor,
   snapshot: HostStateSnapshot,
-  ownIds: ReadonlySet<string>,
+  own: ReadonlySet<string>,
   ownDefault: string | undefined,
 ): void {
-  const agents = editor.list().filter((item) => !ownIds.has(item.id))
+  const agents = editor.list().filter((item) => !ownAgentItemOf(item, own))
   const reportedDefault = editor.defaultAgent?.()
-  const defaultAgent = reportedDefault === undefined || reportedDefault === ownDefault ? undefined : reportedDefault
+  const defaultAgent =
+    ownDefault !== undefined && reportedDefault !== undefined && canonicalAgentKey(reportedDefault) === ownDefault
+      ? undefined
+      : reportedDefault
   snapshot.record({ domain: "agent", value: { agents, ...(defaultAgent === undefined ? {} : { defaultAgent }) } })
 }
 
@@ -83,19 +93,23 @@ export function registerAgentTransform(
   getPlan: () => RegistrationPlan | undefined,
   snapshot: HostStateSnapshot,
 ): PlanStep {
-  const ownIds = new Set<string>()
+  const own = new Set<string>()
   let ownDefault: string | undefined
   let logged = false
   return {
     id: AGENT_STEP_ID,
     domain: "agent",
-    run: async () => {
+    run: async (input) => {
       await ctx.agent.transform(
         guardReplayEditor(AGENT_STEP_ID, (editor) => {
-          recordPristineAgents(editor, snapshot, ownIds, ownDefault)
+          recordPristineAgents(editor, snapshot, own, ownDefault)
           const plan = getPlan()
-          if (plan === undefined) return editor
-          for (const id of replayAgentPlan(editor, plan, !logged)) ownIds.add(id)
+          if (plan === undefined || input.apply !== true) return editor
+          for (const key of Object.keys(plan.agents.added)) {
+            own.add(key)
+            own.add(canonicalAgentKey(key))
+          }
+          for (const id of replayAgentPlan(editor, plan, !logged)) own.add(id)
           logged = true
           const applied = getPlan()?.defaultAgent
           ownDefault = applied === undefined ? undefined : canonicalAgentKey(applied)

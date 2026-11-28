@@ -106,25 +106,27 @@ export function registerCommandTransform(
   return {
     id: COMMAND_STEP_ID,
     domain: "command",
-    run: async () => {
+    run: async (input) => {
       const pristine = await ctx.command.list()
       snapshot.record({
         domain: "command",
         value: pristine.data.filter((entry) => !own.has(entry.name)),
       })
       const plan = getPlan()
-      if (plan !== undefined) {
+      if (plan !== undefined && input.apply === true) {
         const written = await replayCommandPlan(ctx, plan, own)
         if (!logged && written.length > 0) {
           logged = true
           log(`${LOG_MARKER}: registered ${String(written.length)} plugin commands`)
         }
       }
-      await contributeDiscoveredSkills(ctx, {
-        skillDirectory: options?.skillDirectory ?? ctx.location.directory,
-        disabledSkills: options?.disabledSkills,
-        onSkippedSkill: options?.onSkippedSkill,
-      })
+      if (input.apply === true) {
+        await contributeDiscoveredSkills(ctx, {
+          skillDirectory: options?.skillDirectory ?? ctx.location.directory,
+          disabledSkills: options?.disabledSkills,
+          onSkippedSkill: options?.onSkippedSkill,
+        })
+      }
     },
   }
 }

@@ -227,7 +227,7 @@ describe("registerProviderModelTransforms", () => {
     expect(afterFirst.providers).toEqual([{ id: "opengateway", models: ["claude-fable-5"] }])
   })
 
-  it("#given the transforms record before editing #when a second replay runs #then the base carries the recorded provider models and the applied default model", async () => {
+  it("#given the plan contributions applied #when the snapshot reads the configured provider surface #then the base carries the applied provider and the applied default model", async () => {
     // given
     const ctx = createFakeV2Context()
     const snapshot = createHostStateSnapshot(ctx)
@@ -236,17 +236,19 @@ describe("registerProviderModelTransforms", () => {
       "opengateway/claude-fable-5",
     )
     const steps = await registerProviderModelTransforms(asRegistrationContext(ctx), () => plan, snapshot)
-    const pristine = await snapshot.get()
-    expect(pristine.provider).toEqual({})
-    expect(pristine.model).toBeUndefined()
 
-    // when: the next replay records the post-first-apply state as its pre-transform value
+    // when: the registration's first apply landed opengateway on the editor and
+    // a second replay runs (idempotent); the base reads the API-configured
+    // surface, so it carries the applied provider (the catalog backwash of the
+    // editor surface never enters the base)
     await runSteps(steps, plan)
     const settled = await snapshot.get()
 
-    // then
+    // then: the API-configured surface answers the provider row and the applied
+    // default model; model details stay on the editor (the API provider rows
+    // carry no model bodies on this surface)
     expect(Object.keys(settled.provider)).toEqual(["opengateway"])
-    expect(settled.provider["opengateway"]?.models?.["claude-fable-5"]?.name).toBe("Claude Fable 5")
+    expect(settled.provider["opengateway"]?.name).toBe("OpenGateway")
     expect(settled.model).toBe("opengateway/claude-fable-5")
   })
 
@@ -268,11 +270,13 @@ describe("registerProviderModelTransforms", () => {
     await source.idle()
 
     // then: the lists are unchanged, the single pending registration reload
-    // fired once (the reload-gating contract) and the provider domain is never re-read
+    // fired once (the reload-gating contract) and the provider base re-read the
+    // API-configured surface once per refresh (it is the pristine base; the
+    // editor catalog never enters it)
     const afterSecond = await listSummaries(ctx)
     expect(afterSecond).toEqual(afterFirst)
     expect(reloadCount()).toBe(2)
-    expect(ctx.__calls.filter((call) => call.op === "provider.list").length).toBe(1)
+    expect(ctx.__calls.filter((call) => call.op === "provider.list").length).toBe(2)
 
     // when: a recompute lands after the steps re-recorded their replay base
     // (the plan settles onto the re-recorded provider value) and then nothing changes
@@ -281,9 +285,10 @@ describe("registerProviderModelTransforms", () => {
     await source.recompute()
     await source.idle()
 
-    // then: the degrade-driven settle reload fired at most once and no oscillation follows
-    expect(reloadCount()).toBe(3)
-    expect(ctx.__calls.filter((call) => call.op === "provider.list").length).toBe(1)
+    // then: the plan is already stable over the API-configured base, so no
+    // further reload fires and no oscillation follows
+    expect(reloadCount()).toBe(2)
+    expect(ctx.__calls.filter((call) => call.op === "provider.list").length).toBe(4)
     await source.subscription.stop()
   })
 

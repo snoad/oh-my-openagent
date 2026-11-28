@@ -1,31 +1,27 @@
 // Plan source (task 23): the registration recompute engine. Recomputes the
 // registration plan once at start, then on the OpenCode 2 events that carry
-// host config changes (config.updated and the *.updated domain events) with
-// an injectable debounce. One recompute refreshes the task-22 snapshot,
-// reads the pristine base ONLY through it, runs the ordered step registry
-// (tools first, then the V1 config pipeline step, then the later-task
-// transforms) and reloads ONLY the domains whose plan section changed; an
-// unchanged plan never reloads, because a reload publishes *.updated events
-// that would re-trigger the debounce and oscillate.
+// host config changes, with an injectable debounce. One recompute refreshes
+// the task-22 snapshot, reads the pristine base ONLY through it, runs the
+// ordered step registry and reloads ONLY the domains whose plan section
+// changed; an unchanged plan never reloads, because a reload publishes
+// *.updated events that would re-trigger the debounce and oscillate.
 
 import { log } from "../../shared"
 
 import { subscribeV2RawEvents, type V2EventSubscription } from "../events/subscribe-v2-events"
 import { armDebounceWindow, defaultPlanScheduler, drainArmedWindows, type ArmedDebounce } from "./plan-source-debounce"
 import { changedPlanDomains, noopPlanOf } from "./plan-diff"
+import { isRegistrationDigestEnabled, logRecomputeDigest } from "./plan-digest"
 import { createPlanStepRegistry, type PlanStepDomain, type PlanStepRegistry } from "./plan-steps"
 import type { PlanSourceContext, PlanSourceEngine, PlanSourceScheduler } from "./plan-source-context"
 import { computeRegistrationPlan } from "./project-config"
 import { type PlanDomain, type RegistrationPlan } from "./registration-plan"
 import { guardReplayStep } from "./replay-guard"
-import { permissionRulesOfV1Agent } from "./permissions"
 import { createHostStateSnapshot, type HostStateSnapshot } from "./host-state-snapshot"
 
-// Verified against the pinned @opencode/schema 2.4.1 (the host's own event
-// schemas): config.updated, agent.updated, command.updated, model.updated and
-// provider.updated exist there. tool.updated and mcp.updated do NOT exist on
-// 2.4.1 (the tool and mcp schema modules carry no updated events), so their
-// recompute rides on config.updated.
+// Verified against the pinned @opencode/schema 2.4.1: the five events exist
+// there; tool.updated and mcp.updated do NOT (their recompute rides on
+// config.updated).
 export const PLAN_SOURCE_EVENT_TYPES = [
   "config.updated",
   "agent.updated",
@@ -36,9 +32,7 @@ export const PLAN_SOURCE_EVENT_TYPES = [
 
 export const DEFAULT_PLAN_DEBOUNCE_MS = 500
 
-// The settle round cap: startup event chains observed on the live host
-// converge within a handful of debounced recomputes; 16 leaves headroom
-// without unbounding the drain against a reconnect storm.
+// Startup chains settle within a handful of debounced recomputes.
 const DEFAULT_SETTLE_MAX_ROUNDS = 16
 
 const LOG_MARKER = "[opencode-v2] plan-source"
@@ -47,6 +41,10 @@ export type PlanSource = {
   readonly getPlan: () => RegistrationPlan | undefined
   readonly snapshot: HostStateSnapshot
   readonly registerStep: PlanStepRegistry["register"]
+  // id -> the description this runtime registered the tool with; the record
+  // drops an item only on BOTH matching (plan-convergence.test.ts).
+  readonly addOwnToolMarkers: (entries: ReadonlyArray<readonly [string, string]>) => void
+  readonly ownToolMarkers: ReadonlyMap<string, string>
   readonly recompute: () => Promise<void>
   readonly settle: () => Promise<void>
   readonly idle: () => Promise<void>
@@ -59,6 +57,7 @@ export type CreatePlanSourceOptions = {
   readonly debounceMs?: number
   readonly signal?: AbortSignal
   readonly settleMaxRounds?: number
+  readonly directory?: string
 }
 
 const domainReloaders: Record<PlanDomain, (ctx: PlanSourceContext) => Promise<void>> = {
@@ -70,13 +69,10 @@ const domainReloaders: Record<PlanDomain, (ctx: PlanSourceContext) => Promise<vo
   model: (ctx) => ctx.model.reload(),
 }
 
-// The plan domains a step registration must force-reload exactly once on the
-// next recompute. The host applies a registered editor transform only when its
-// domain reloads (live row L-04 at HEAD a69eaf7234: the tool step logged
-// "registered 14 plugin tools" with no replay failure, yet no plugin tool
-// reached the session's model request, because the plan never changed after
-// the registration and so no tool reload ever ran). config has no host editor
-// to reload and permission rides on the agent items, so both map to nothing.
+// The plan domains a step registration must force-reload exactly once: the
+// host applies a registered editor transform only when its domain reloads
+// (live row L-04 at HEAD a69eaf7234). config has no host editor to reload and
+// permission rides on the agent items, so both map to nothing.
 const STEP_DOMAIN_RELOAD_TARGETS: Record<PlanStepDomain, readonly PlanDomain[]> = {
   tool: ["tools"],
   config: [],
@@ -98,11 +94,13 @@ export async function createPlanSource(
   const scheduler = options.scheduler ?? defaultPlanScheduler
   const debounceMs = options.debounceMs ?? DEFAULT_PLAN_DEBOUNCE_MS
   const settleMaxRounds = options.settleMaxRounds ?? DEFAULT_SETTLE_MAX_ROUNDS
+  const directory = options.directory
   let lastApplied: RegistrationPlan | undefined
   let currentPlan: RegistrationPlan | undefined
   let armed: ArmedDebounce | undefined
   let queueTail: Promise<void> = Promise.resolve()
   const pendingReloads = new Set<PlanDomain>()
+  const ownToolMarkers = new Map<string, string>()
 
   steps.register({
     id: "plan-config-pipeline",
@@ -116,22 +114,33 @@ export async function createPlanSource(
   const recomputeNow = async (): Promise<void> => {
     await snapshot.refresh()
     const base = await snapshot.get()
+    // Every step records its pristine base on every recompute (that read
+    // detects a foreign host change) but writes only while the plan moves: a
+    // settled recompute that re-applied the transforms would mutate the host
+    // registries again, whose *.updated echoes arm the debounce forever.
+    let applying = pendingReloads.size > 0
     for (const step of steps.steps()) {
-      await step.run({ ctx, engine, snapshot, base, plan: currentPlan })
+      await step.run({ ctx, engine, snapshot, base, plan: currentPlan, apply: applying })
+      if (step.domain === "config" && currentPlan !== undefined) {
+        const baseline = lastApplied ?? noopPlanOf(base)
+        applying = applying || changedPlanDomains(baseline, currentPlan).length > 0
+      }
     }
     if (currentPlan === undefined) return
     const baseline = lastApplied ?? noopPlanOf(base)
     const changed = changedPlanDomains(baseline, currentPlan)
-    if (changed.length === 0 && pendingReloads.size === 0) {
-      lastApplied = currentPlan
-      return
-    }
+    const reloaded = applying || changed.length > 0
     const reloadDomains = new Set<PlanDomain>([...changed, ...pendingReloads])
-    pendingReloads.clear()
-    for (const domain of reloadDomains) {
-      await domainReloaders[domain](ctx)
+    if (reloaded) {
+      pendingReloads.clear()
+      for (const domain of reloadDomains) {
+        await domainReloaders[domain](ctx)
+      }
     }
     lastApplied = currentPlan
+    if (isRegistrationDigestEnabled()) {
+      logRecomputeDigest({ directory: directory ?? "", plan: currentPlan, base, changed, reloadDomains })
+    }
   }
 
   const enqueue = (run: () => Promise<void>): Promise<void> => {
@@ -175,6 +184,10 @@ export async function createPlanSource(
   return {
     getPlan: () => currentPlan,
     snapshot,
+    addOwnToolMarkers: (entries) => {
+      for (const [id, description] of entries) ownToolMarkers.set(id, description)
+    },
+    ownToolMarkers,
     registerStep: (step) => {
       steps.register(step.domain === "config" ? step : { ...step, run: guardReplayStep(step.id, step.run) })
       for (const domain of STEP_DOMAIN_RELOAD_TARGETS[step.domain]) pendingReloads.add(domain)

@@ -39,8 +39,8 @@ export async function lim15PermissionProjectionCheck(): Promise<void> {
 
   // when
   const { rules, unmapped } = permissionRulesOfV1Agent(entry, {})
-  await step.run({ plan } as Parameters<typeof step.run>[0])
-  await step.run({ plan } as Parameters<typeof step.run>[0])
+  await step.run({ plan, apply: true } as Parameters<typeof step.run>[0])
+  await step.run({ plan, apply: true } as Parameters<typeof step.run>[0])
 
   // then
   const declaration = readFileSync(schemaDeclarationPath("agent"), "utf8")

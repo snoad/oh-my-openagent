@@ -14,9 +14,13 @@ import { writeSessionTodos } from "./todo-store"
 // A plan-source double that applies every registered step on recompute.
 function inlinePlanSource(): TodoToolPlanSource & { readonly recompute: () => Promise<void> } {
   const steps: Array<{ run: () => void | Promise<void> }> = []
+  const ownToolMarkers = new Map<string, string>()
   return {
     registerStep: (step) => {
       steps.push(step)
+    },
+    addOwnToolMarkers: (entries) => {
+      for (const [id, description] of entries) ownToolMarkers.set(id, description)
     },
     recompute: async () => {
       for (const step of steps) await step.run()

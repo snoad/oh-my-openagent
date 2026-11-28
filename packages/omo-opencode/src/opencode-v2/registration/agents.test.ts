@@ -246,7 +246,7 @@ describe("agent registration over the real engine", () => {
       defaultAgent: "probe-new",
     }
     const step = registerAgentTransform(ctx, () => plan, snapshot)
-    await step.run({ ctx, engine: {}, snapshot, base: await snapshot.get(), plan })
+    await step.run({ ctx, engine: {}, snapshot, base: await snapshot.get(), plan, apply: true })
 
     // when: the replay ran
     const list = (await ctx.agent.list()).data

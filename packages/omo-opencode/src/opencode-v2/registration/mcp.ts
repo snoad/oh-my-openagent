@@ -88,6 +88,11 @@ export function registerMcpTransform(
   options?: McpRegistrationOptions,
 ): PlanStep {
   const reported = new Set<string>()
+  // Servers this runtime set itself: the record must exclude them because the
+  // real host hands the replay a value that already contains them, and an
+  // unfiltered record makes every round's plan differ from the last applied
+  // one, reloading forever.
+  const ownServers = new Set<string>()
   const reportUnsupported: UnsupportedMcpReporter = (entry) => {
     if (reported.has(entry)) return
     reported.add(entry)
@@ -99,13 +104,17 @@ export function registerMcpTransform(
   return {
     id: MCP_STEP_ID,
     domain: "mcp",
-    run: async () => {
+    run: async (input) => {
       await ctx.mcp.transform(
         guardReplayEditor(MCP_STEP_ID, (editor) => {
-          snapshot.record({ domain: "mcp", value: mcpSnapshotValueOf(editor) })
+          snapshot.record({
+            domain: "mcp",
+            value: mcpSnapshotValueOf(editor).filter(([name]) => !ownServers.has(name)),
+          })
           const plan = getPlan()
-          if (plan !== undefined) {
+          if (plan !== undefined && input.apply === true) {
             const written = replayMcpPlan(editor, plan.mcp, reportUnsupported)
+            for (const name of written) ownServers.add(name)
             if (!logged && written.length > 0) {
               logged = true
               log(`${LOG_MARKER}: registered ${String(written.length)} mcp servers: ${written.join(", ")}`)

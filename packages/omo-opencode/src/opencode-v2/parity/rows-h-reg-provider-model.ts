@@ -16,9 +16,8 @@ import { createFakeV2Context, type FakeV2Context } from "./fake-v2-context"
 import { defineGroup, type ParityRow } from "./rows"
 
 // Wave-3 H-REG provider and model rows (plan task 28): the plan.provider
-// contributions and the model restrictions, overrides and default land on the
-// OpenCode 2 provider and model domains, replay stays idempotent and the
-// recorded pre-transform state survives a reload-triggered recompute.
+// contributions and the model restrictions land on the OpenCode 2 provider
+// and model domains, replay stays idempotent over the configured base.
 
 function registrationCtx(ctx: FakeV2Context): ProviderModelContext {
   return ctx as ProviderModelContext
@@ -32,7 +31,7 @@ async function runSteps(
   steps: readonly [ProviderModelPlanStep, ProviderModelPlanStep],
   plan: RegistrationPlan | undefined,
 ): Promise<void> {
-  for (const step of steps) await step.run({ plan })
+  for (const step of steps) await step.run({ plan, apply: true })
 }
 
 async function summaries(ctx: FakeV2Context): Promise<{
@@ -72,7 +71,7 @@ async function checkProviderContributions(): Promise<void> {
     },
   })
   const steps = await registerProviderModelTransforms(registrationCtx(ctx), () => plan, snapshot)
-  await steps[0]?.run({ plan })
+  await steps[0]?.run({ plan, apply: true })
   await ctx.provider.transform((editor: ProviderRegistrationEditor) => {
     const gateway = editor.get("opengateway")
     expect(gateway?.provider.name).toBe("OpenGateway")
@@ -113,7 +112,7 @@ async function checkModelRestrictions(): Promise<void> {
     })
   })
   const steps = await registerProviderModelTransforms(registrationCtx(ctx), () => plan, snapshot)
-  await steps[1]?.run({ plan })
+  await steps[1]?.run({ plan, apply: true })
   await ctx.model.transform((editor: ModelRestrictionEditor) => {
     const fable = editor.get("anthropic", "claude-fable-5")
     expect(fable?.name).toBe("Claude Fable 5")
@@ -154,14 +153,15 @@ async function checkReplaySettles(): Promise<void> {
   await source.idle()
   expect(await summaries(ctx)).toEqual(afterFirst)
   expect(reloadCount()).toBe(2)
-  expect(listCount()).toBe(1)
+  expect(listCount()).toBe(2)
   await source.recompute()
   await source.idle()
   await source.recompute()
   await source.idle()
   expect(await summaries(ctx)).toEqual(afterFirst)
-  expect(reloadCount()).toBe(3)
-  expect(listCount()).toBe(1)
+  // stable over the API-configured base
+  expect(reloadCount()).toBe(2)
+  expect(listCount()).toBe(4)
   const base = await source.snapshot.get()
   expect(Object.keys(base.provider)).toEqual(["opengateway"])
   await source.subscription.stop()
@@ -190,7 +190,7 @@ export const hRegProviderModelRows: ParityRow[] = defineGroup("H-REG", [
   {
     suffix: "PROVIDER-MODEL-REPLAY",
     title:
-      "replay is idempotent and a recorded pre-transform value survives a reload-triggered recompute without oscillation",
+      "replay is idempotent and the configured provider base survives a reload-triggered recompute without oscillation",
     kind: "hermetic",
     is: ["IS-2", "IS-5"],
     wave: 3,

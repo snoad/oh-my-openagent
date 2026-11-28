@@ -127,15 +127,17 @@ export type TodoToolEditor = {
   readonly add: (tool: TodoToolRegistrationEntry) => void
 }
 
-// The registration needs only the step registry side of the plan source; the
-// step run reads no PlanStepRunInput, so this structural subset stays
-// satisfiable by the real PlanSource and by test doubles alike.
+// The registration needs only the step registry side of the plan source plus
+// the own-tool-id registry the tool record filters against; the step run
+// reads no PlanStepRunInput, so this structural subset stays satisfiable by
+// the real PlanSource and by test doubles alike.
 export type TodoToolPlanSource = {
   readonly registerStep: (step: {
     readonly id: string
     readonly domain: "tool"
     readonly run: () => void | Promise<void>
   }) => void
+  readonly addOwnToolMarkers: (entries: ReadonlyArray<readonly [string, string]>) => void
 }
 
 const STEP_ID = "v2-todo-registration"
@@ -180,6 +182,10 @@ export function registerTodoTools(ctx: TodoToolExecuteContext, planSource: TodoT
           return
         }
       }
+      planSource.addOwnToolMarkers([
+        [TODOWRITE_NAME, TODOWRITE_DESCRIPTION],
+        [TODOREAD_NAME, TODOREAD_DESCRIPTION],
+      ])
       await applyTodoTools(ctx)
     },
   })

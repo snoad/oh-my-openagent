@@ -143,6 +143,7 @@ const v2PlanSourceAdapterRegistration: V2AdapterRegistration = {
     try {
       const source = await createPlanSource(ctx as V2RuntimePluginContext & PlanSourceContext, runtime.engine, {
         signal: runtime.abort.signal,
+        directory: ctx.location.directory,
       })
       runtime.planSource = source
       runtime.subscriptions?.push(source.subscription)
