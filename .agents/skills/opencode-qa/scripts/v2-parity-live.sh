@@ -321,25 +321,6 @@ oqa_pl_wait_scenario_model() {
   printf '%s\n' '{"steps":[{"text":"OQA_PROBE_FINAL ok"}]}' > "$probe_steps"
   rm -rf "$probe_out"
 
-  # The omo model-core reads the connected-providers and provider-models
-  # caches from $XDG_CACHE_HOME/oh-my-opencode when it resolves every agent's
-  # model during the first apply. Seeding them with the sandbox's own model
-  # universe (openai/gpt-fake) makes that resolution deterministic instead of
-  # an empty-set fallback that bakes the host's first-party fallback model
-  # into every agent item (which is what served the early sessions on
-  # opencode/big-pickle and burned the first-party quota).
-  local omo_cache_dir="${XDG_CACHE_HOME:-/root/.cache}/oh-my-opencode"
-  if [ -n "${XDG_CACHE_HOME:-}" ]; then
-    mkdir -p "$omo_cache_dir"
-    printf '%s\n' "{\"connected\": [\"openai\"], \"updatedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-      > "$omo_cache_dir/connected-providers.json"
-    printf '%s\n' "{\"models\": {\"openai\": [\"gpt-fake\"]}, \"connected\": [\"openai\"], \"updatedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-      > "$omo_cache_dir/provider-models.json"
-    [ -f "${OQA_PL_REAL_HOME:-$HOME}/.cache/oh-my-opencode/model-capabilities.json" ] \
-      && cp -f "${OQA_PL_REAL_HOME:-$HOME}/.cache/oh-my-opencode/model-capabilities.json" \
-        "$omo_cache_dir/model-capabilities.json" 2>/dev/null || true
-    oqa_pl_log "omo model caches seeded for the delegate categories and the agent-model bake"
-  fi
 
   # Phase 1: wait for the host's own default model to flip to the config
   # model (the provider catalog has landed and the host re-resolved). Phase
@@ -370,13 +351,6 @@ oqa_pl_wait_scenario_model() {
   # dead models.dev route) the pipeline writes task:false and patch:false
   # into the plan's tools map and the request-level filter hides them. The
   # file is the host's own format, copied verbatim from the real home.
-  local models_cache_src="${OQA_PL_MODELS_CACHE:-${OQA_PL_REAL_HOME:-$HOME}/.cache/opencode/models.json}"
-  if [ -f "$models_cache_src" ] && [ -n "${XDG_CACHE_HOME:-}" ]; then
-    mkdir -p "$XDG_CACHE_HOME/opencode"
-    cp -f "$models_cache_src" "$XDG_CACHE_HOME/opencode/models.json" 2>/dev/null || true
-    oqa_pl_log "sandbox models.dev cache seeded from $models_cache_src"
-  fi
-
   local want_model="${model#*/}" flip_seen="" i resp
   for i in $(seq 1 60); do
     resp="$(curl -sf -m 3 -u "opencode:$pass" "$url/api/model/default" 2>/dev/null)" || resp=""
@@ -868,7 +842,7 @@ oqa_pl_main() {
   # depends on the host's provider-catalog landing and falls back to the
   # first-party model on a slow box, which both desyncs the prompt bytes from
   # the baseline and serves the early sessions on the wrong model).
-  printf '%s\n' '{ "agents": { "atlas": { "model": "anthropic/claude-sonnet-5" }, "sisyphus": { "model": "openai/gpt-fake" }, "hephaestus": { "model": "openai/gpt-6-sol" }, "metis": { "model": "openai/gpt-fake" }, "momus": { "model": "openai/gpt-fake" }, "oracle": { "model": "openai/gpt-fake" }, "sisyphus-junior": { "model": "anthropic/claude-sonnet-5" } }, "[opencode]": { "hashline_edit": true, "disabled_tools": ["look_at"], "mcp_env_allowlist": ["OQA_SECRET_TOKEN"] } }' > "$omo_cfg"
+  printf '%s\n' '{ "agents": { "atlas": { "model": "anthropic/claude-sonnet-5" } }, "[opencode]": { "hashline_edit": true, "disabled_tools": ["look_at"], "mcp_env_allowlist": ["OQA_SECRET_TOKEN"] } }' > "$omo_cfg"
   oqa_pl_log "sandbox omo config written: $omo_cfg"
   local plugin_dir cfg_dir cfg_body
   plugin_dir="${OQA_V2_PLUGIN_DIR:-$REPO_ROOT}"
@@ -928,18 +902,11 @@ JSON
   printf '%s\n' "{\"steps\":[{\"tool_call\":{\"name\":\"shell\",\"arguments\":{\"command\":\"cat $PROJ_DIR/parity-file.txt\"}}},{\"text\":\"OQA_C_FINAL done catting\"}]}" > "$WORK_DIR/scenario-c.json"
 
   mkdir -p "$WORK_DIR/req-a" "$WORK_DIR/req-b" "$WORK_DIR/req-c"
-  oqa_pl_wait_scenario_model "$PROJ_DIR" "$OQA_V2_SERVER_URL" "$OQA_V2_SERVER_PASS" "$cfg_dir/opencode.json" || true
   oqa_pl_start_fake "$WORK_DIR/scenario-a.json" "$WORK_DIR/req-a" || return 1
 
   local server_start_ms plugin_first_seen_ms="" i st resp
   server_start_ms="$(date +%s%3N)"
   export OQA_SECRET_TOKEN="$OQA_PL_SECRET_TOKEN"
-  # The sandbox sets OPENCODE_DISABLE_MODELS_FETCH=1 for isolation; the serve
-  # is the one process that must fetch the models.dev catalog (it maps the
-  # openai provider to its SDK), so the flag is dropped for the serve only.
-  # The scenario-model probe gate below still decides when the scenarios may
-  # start, so a slow or dead fetch only delays the run inside its deadline.
-  unset OPENCODE_DISABLE_MODELS_FETCH
   oqa_v2_serve_start || return 1
   oqa_v2_wait_ready 60 || { oqa_pl_fail "server never became ready"; cat "$OQA_V2_SANDBOX/serve.out" >&2; return 1; }
   # The first-session race pin (PR #4): scenario A launches with NO settle
