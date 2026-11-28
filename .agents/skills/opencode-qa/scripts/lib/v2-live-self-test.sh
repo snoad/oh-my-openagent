@@ -918,6 +918,107 @@ driver_tests() {
   wait "$ev_pid" 2>/dev/null || true
   unset OQA_PL_IDLE_WINDOW_SECS EV_LIVE
 
+  # 6g-quater. registration steady window (the PR #4 post-activation pin):
+  # PASS on a stable host log + quiet stream, FAIL on a counted *.updated
+  # event in the window, FAIL on a reload-relevant plugin write gained in the
+  # window, and the MCP-connect precondition is recorded (not gating) when the
+  # host log carries no connected line. The grace/wait knobs shrink for the
+  # self-test; the endpoints are real SSE streams.
+  local steadir
+  mkdir -p "$TMP/dtsteady"
+  steadir="$TMP/dtsteady"
+  EV_LIVE="$steadir"
+  OQA_PL_STEADY_WINDOW_SECS=2
+  OQA_PL_STEADY_WAIT_SECS=3
+  OQA_PL_STEADY_GRACE_TICKS=1
+  printf '%s\n' \
+    'timestamp=stub level=INFO message="mcp connected" server=lsp tools=9 role=server' \
+    > "$steadir/host.log"
+  steady_run() {
+    oqa_pl_steady_window_quiet "$1" "$steadir/host.log" "$2" "stub-pass" > "$TMP/steady-msg.out" 2>&1
+  }
+
+  # case 1: quiet stream -> PASS with the saved capture + digest.
+  printf 'seed\n' > "$steadir/plugin.log"
+  read -r ev_port ev_pid < <(start_sse "") || { oqa_st_fail "steady case 1: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
+  fails_before=$FAILS
+  steady_run "$steadir/plugin.log" "http://127.0.0.1:$ev_port/api/event"; rc=$?
+  out="$(cat "$TMP/steady-msg.out" 2>/dev/null || true)"
+  if [ "$rc" -eq 0 ] && [ $((FAILS - fails_before)) -eq 0 ] \
+    && printf '%s' "$out" | grep -qF 'zero *.updated events, zero reload writes' \
+    && printf '%s' "$out" | grep -qF 'registration steady' \
+    && [ -s "$steadir/steady-window.sse" ] \
+    && grep -qF 'verdict=PASS' "$steadir/steady-window.txt" \
+    && grep -qF 'events_in_window=0' "$steadir/steady-window.txt" \
+    && grep -qF 'plugin_reload_writes=0' "$steadir/steady-window.txt" \
+    && grep -qF 'mcp_connected_stable=1' "$steadir/steady-window.txt"; then
+    oqa_st_pass "driver: steady window PASSes on a quiet host with MCP connected and saves the capture + digest"
+  else
+    bad "driver: steady window failed on a quiet host (rc=$rc out=$out)"
+  fi
+  kill "$ev_pid" 2>/dev/null || true
+  wait "$ev_pid" 2>/dev/null || true
+
+  # case 2: one counted event in the window -> FAIL, the digest names it.
+  read -r ev_port ev_pid < <(start_sse "provider.updated@0.4") || { oqa_st_fail "steady case 2: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
+  fails_before=$FAILS
+  steady_run "$steadir/plugin.log" "http://127.0.0.1:$ev_port/api/event"; rc=$?
+  out="$(cat "$TMP/steady-msg.out" 2>/dev/null || true)"
+  if [ "$rc" -ne 0 ] && [ $((FAILS - fails_before)) -eq 1 ] \
+    && printf '%s' "$out" | grep -qF 'events=1 reload writes=0' \
+    && printf '%s' "$out" | grep -qF 'registration reloaded after activation' \
+    && grep -qF 'verdict=FAIL' "$steadir/steady-window.txt" \
+    && grep -qF 'events_in_window=1' "$steadir/steady-window.txt" \
+    && grep -qF 'provider.updated' "$steadir/steady-window.txt" \
+    && [ -s "$steadir/steady-window.sse" ]; then
+    oqa_st_pass "driver: steady window FAILs truthfully on a post-activation event and the digest names it"
+  else
+    bad "driver: steady window event-case did not fail truthfully (rc=$rc out=$out)"
+  fi
+  kill "$ev_pid" 2>/dev/null || true
+  wait "$ev_pid" 2>/dev/null || true
+
+  # case 3: a reload-relevant plugin write gained in the window -> FAIL.
+  read -r ev_port ev_pid < <(start_sse "") || { oqa_st_fail "steady case 3: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
+  printf 'seed\n' > "$steadir/plugin.log"
+  ( sleep 2.5; printf '[%s] [opencode-v2] agent-registration: replayed 17 agents: x\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$steadir/plugin.log" ) &
+  app_pid=$!
+  fails_before=$FAILS
+  steady_run "$steadir/plugin.log" "http://127.0.0.1:$ev_port/api/event"; rc=$?
+  out="$(cat "$TMP/steady-msg.out" 2>/dev/null || true)"
+  wait "$app_pid" 2>/dev/null || true
+  if [ "$rc" -ne 0 ] && [ $((FAILS - fails_before)) -eq 1 ] \
+    && printf '%s' "$out" | grep -qF 'events=0 reload writes=1' \
+    && grep -qF 'verdict=FAIL' "$steadir/steady-window.txt" \
+    && grep -qF 'plugin_reload_writes=1' "$steadir/steady-window.txt" \
+    && grep -qF 'agent-registration: replayed' "$steadir/steady-window.txt"; then
+    oqa_st_pass "driver: steady window FAILs truthfully on a gained reload write and the digest quotes the line"
+  else
+    bad "driver: steady window write-case did not fail truthfully (rc=$rc out=$out)"
+  fi
+  kill "$ev_pid" 2>/dev/null || true
+  wait "$ev_pid" 2>/dev/null || true
+
+  # case 4: no mcp connected line at all -> the precondition is recorded as
+  # not reached, the verdict still rides events and writes only.
+  : > "$steadir/host.log"
+  printf 'seed\n' > "$steadir/plugin.log"
+  read -r ev_port ev_pid < <(start_sse "") || { oqa_st_fail "steady case 4: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
+  fails_before=$FAILS
+  steady_run "$steadir/plugin.log" "http://127.0.0.1:$ev_port/api/event"; rc=$?
+  out="$(cat "$TMP/steady-msg.out" 2>/dev/null || true)"
+  if [ "$rc" -eq 0 ] && [ $((FAILS - fails_before)) -eq 0 ] \
+    && grep -qF 'mcp_connected_stable=0' "$steadir/steady-window.txt" \
+    && grep -qF 'mcp-connect stability not reached' "$TMP/steady-msg.out" \
+    && grep -qF 'verdict=PASS' "$steadir/steady-window.txt"; then
+    oqa_st_pass "driver: steady window records an unreachable MCP precondition without gating the verdict"
+  else
+    bad "driver: steady window precondition-case did not behave (rc=$rc out=$out)"
+  fi
+  kill "$ev_pid" 2>/dev/null || true
+  wait "$ev_pid" 2>/dev/null || true
+  unset OQA_PL_STEADY_WINDOW_SECS OQA_PL_STEADY_WAIT_SECS OQA_PL_STEADY_GRACE_TICKS EV_LIVE
+
   # 6g-ter. V1 baseline recapture: with the switch the driver invokes the
   # baseline capture (stubbed capture script, no V1 host needed) before the
   # sandbox; without the switch it never runs; a failing capture fails fast

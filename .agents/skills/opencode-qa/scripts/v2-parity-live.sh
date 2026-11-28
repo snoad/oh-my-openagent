@@ -302,6 +302,46 @@ oqa_pl_stop_evt() {
 
 # Drives one OC2 run and records the session id + SSE capture.
 # Args: <key> <title> <prompt> <proj-dir>; sets OQA_PL_SID
+# ---- scenario-model readiness gate (the PR #4 driver precondition) ----------
+# The host resolves every session's model from its own provider registry,
+# whose catalog half (the models.dev metadata that maps the openai provider to
+# its SDK) lands asynchronously seconds after the server is ready (the live
+# digests: the base default flips opencode/big-pickle -> openai/gpt-fake
+# exactly at the catalog round). A session admitted before that landing cannot
+# resolve the config model openai/gpt-fake, and the host serves it on the
+# first-party fallback model, so the fake server never sees the request.
+# This gate runs THROWAWAY probe sessions against the fake server until one is
+# actually served by openai/gpt-fake (the fake records every request, so the
+# recording is the observable), then the scenarios start; the
+# plugin-activation race itself (no settle wait for the registration recompute
+# chain) is unchanged. Each probe is capped at OQA_PL_PROBE_SECS (30) and the
+# whole gate at OQA_PL_MODEL_WAIT_SECS (90); when the gate gives up the
+# scenarios start anyway and the model-dependent rows fail on their own
+# evidence.
+oqa_pl_wait_scenario_model() {
+  local proj="$1" url="$2" pass="$3"
+  local model="${OQA_V2_SCENARIO_MODEL:-openai/gpt-fake}"
+  local deadline=$(( $(date +%s) + ${OQA_PL_MODEL_WAIT_SECS:-150} )) rc
+  local probe_steps="$WORK_DIR/scenario-probe.json" probe_out="$WORK_DIR/req-probe"
+  printf '%s\n' '{"steps":[{"text":"OQA_PROBE_FINAL ok"}]}' > "$probe_steps"
+  rm -rf "$probe_out"
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    rm -f "$probe_out/requests.jsonl"
+    oqa_pl_start_fake "$probe_steps" "$probe_out" || return 1
+    ( cd "$proj" && OPENCODE_PASSWORD="$pass" timeout "${OQA_PL_PROBE_SECS:-30}" "$OC2" run \
+        "Reply with exactly: OQA_PROBE_FINAL ok" --title "v2 parity probe" \
+        --format json --server "$url" ) > /dev/null 2>&1
+    rc=$?
+    if [ -s "$probe_out/requests.jsonl" ] && grep -qF '"model":"'"$model"'"' "$probe_out/requests.jsonl"; then
+      oqa_pl_log "probe session served by $model; the scenario model is ready"
+      return 0
+    fi
+    oqa_pl_log "probe session not served by $model (rc=$rc); retrying until the deadline"
+  done
+  oqa_pl_log "no probe session was served by $model within the deadline; starting the scenarios anyway"
+  return 1
+}
+
 oqa_pl_run_once() {
   local key="$1" title="$2" prompt="$3" proj="$4"
   oqa_pl_stop_evt
@@ -567,6 +607,102 @@ oqa_pl_idle_window_convergence() {
   fi
 }
 
+# ---- registration steady window (the PR #4 post-activation pin) -------------
+# Sits between the last scenario activation (every location's plugin applied
+# and the TUI smoke done) and the driver's host config change. A bounded wait
+# first proves the MCP servers connected: the host log's `mcp connected` line
+# count must exist and hold stable across OQA_PL_STEADY_GRACE_TICKS one-second
+# ticks (deadline OQA_PL_STEADY_WAIT_SECS, default 45). Then a quiet window
+# (OQA_PL_STEADY_WINDOW_SECS, default 12) streams /api/event; the verdict is
+# ZERO counted provider|model|agent|command.updated events on the wire AND
+# zero reload-relevant plugin writes gained in the plugin log. The steady
+# registration contract: after activation a stable host never reloads.
+# Self-evidencing: the raw SSE capture lands in $EV_LIVE/steady-window.sse and
+# the digest in $EV_LIVE/steady-window.txt, shaped like the idle-window pin.
+
+oqa_pl_steady_window_quiet() {
+  local plugin_log="$1" host_log="$2" url="$3" pass="$4"
+  local wait_secs="${OQA_PL_STEADY_WAIT_SECS:-45}"
+  local window="${OQA_PL_STEADY_WINDOW_SECS:-12}"
+  local grace="${OQA_PL_STEADY_GRACE_TICKS:-5}"
+  local ev_dir sse_file digest_file
+  ev_dir="${EV_LIVE:-${TMPDIR:-/tmp}}"
+  sse_file="$ev_dir/steady-window.sse"
+  digest_file="$ev_dir/steady-window.txt"
+  mkdir -p "$ev_dir"
+
+  local i count=0 stable=0 connected=0 new_count
+  for i in $(seq 1 "$wait_secs"); do
+    new_count="$(grep -c 'message="mcp connected"' "$host_log" 2>/dev/null)"
+    new_count="${new_count:-0}"
+    if [ "$new_count" -gt 0 ] && [ "$new_count" -eq "$count" ]; then
+      stable=$((stable + 1))
+      [ "$stable" -ge "$grace" ] && { connected=1; break; }
+    else
+      stable=0
+      count="$new_count"
+    fi
+    if [ -n "${OQA_V2_SERVER_PID:-}" ] && ! kill -0 "$OQA_V2_SERVER_PID" 2>/dev/null; then break; fi
+    sleep 1
+  done
+  [ "$connected" -eq 1 ] || oqa_pl_log "steady window: mcp-connect stability not reached within ${wait_secs}s (lines=$count); judging the window anyway"
+
+  local before_bytes after_bytes
+  before_bytes="$(wc -c < "$plugin_log" 2>/dev/null || printf '0')"
+  before_bytes="$(printf '%s' "$before_bytes" | tr -d '[:space:]')"
+
+  : > "$sse_file"
+  local line
+  while IFS= read -r line; do
+    printf '%s\n' "$line" >> "$sse_file"
+  done < <(curl -s -N -m "$window" -u "opencode:$pass" "$url/api/event" 2>/dev/null)
+
+  local ev_count=0 ev_lines="" ev_type ev_dir_name
+  while IFS= read -r line; do
+    printf '%s' "$line" | grep -q -E '"type":"(provider|model|agent|command)\.updated"' || continue
+    ev_count=$((ev_count + 1))
+    ev_type="$(printf '%s' "${line#data: }" | jq -r '.type // "?"' 2>/dev/null || printf '?')"
+    ev_dir_name="$(printf '%s' "${line#data: }" | jq -r '.data.location.directory // "?"' 2>/dev/null || printf '?')"
+    ev_lines+="  event ${ev_type} ${ev_dir_name}"$'\n'
+  done < "$sse_file"
+
+  local write_re wr_gained=0 wr_writes=0 wr_lines=""
+  write_re='\[opencode-v2\] (tool-registration: registered|command-registration: registered|mcp-registration: registered|agent-registration: replayed|todo-registration: registered)'
+  after_bytes="$(wc -c < "$plugin_log" 2>/dev/null || printf '0')"
+  after_bytes="$(printf '%s' "$after_bytes" | tr -d '[:space:]')"
+  if [ "$after_bytes" -gt "$before_bytes" ] && [ -f "$plugin_log" ]; then
+    while IFS= read -r line; do
+      wr_gained=$((wr_gained + 1))
+      printf '%s' "$line" | grep -qE "$write_re" || continue
+      wr_writes=$((wr_writes + 1))
+      wr_lines+="  write ${line}"$'\n'
+    done < <(tail -c "+$((before_bytes + 1))" "$plugin_log" 2>/dev/null)
+  fi
+
+  local verdict="FAIL"
+  [ "$ev_count" -eq 0 ] && [ "$wr_writes" -eq 0 ] && verdict="PASS"
+  {
+    printf '# steady-window digest (PR #4 post-activation pin)\n'
+    printf 'window_seconds=%s\n' "$window"
+    printf 'rule=ZERO counted *.updated events AND zero reload-relevant plugin writes after activation and the MCP-connect wait, before the host config change\n'
+    printf 'mcp_connected_stable=%s\n' "$connected"
+    printf 'mcp_connected_lines=%s\n' "$count"
+    printf 'events_in_window=%s\n' "$ev_count"
+    printf 'plugin_writes_gained_total=%s\n' "$wr_gained"
+    printf 'plugin_reload_writes=%s\n' "$wr_writes"
+    printf 'sse_capture=%s\n' "$sse_file"
+    [ -n "$ev_lines" ] && printf 'events_in_window_lines:\n%s' "$ev_lines"
+    [ -n "$wr_lines" ] && printf 'plugin_reload_write_lines:\n%s' "$wr_lines"
+    printf 'verdict=%s\n' "$verdict"
+  } > "$digest_file"
+
+  if [ "$verdict" = "PASS" ]; then
+    oqa_pl_pass "steady window after activation (${window}s, mcp lines: $count): zero *.updated events, zero reload writes (registration steady)"
+  else
+    oqa_pl_fail "steady window after activation (${window}s, mcp lines: $count): events=$ev_count reload writes=$wr_writes (registration reloaded after activation)"
+  fi
+}
+
 # Import mode: the self-test sources this file to exercise the verdict
 # table, the strict gate, the L-18 verdict write-back and the bun/ guard
 # without any OC2 dependency or trap overwrite. Everything above is
@@ -698,6 +834,12 @@ JSON
   local server_start_ms plugin_first_seen_ms="" i st resp
   server_start_ms="$(date +%s%3N)"
   export OQA_SECRET_TOKEN="$OQA_PL_SECRET_TOKEN"
+  # The sandbox sets OPENCODE_DISABLE_MODELS_FETCH=1 for isolation; the serve
+  # is the one process that must fetch the models.dev catalog (it maps the
+  # openai provider to its SDK), so the flag is dropped for the serve only.
+  # The scenario-model probe gate below still decides when the scenarios may
+  # start, so a slow or dead fetch only delays the run inside its deadline.
+  unset OPENCODE_DISABLE_MODELS_FETCH
   oqa_v2_serve_start || return 1
   oqa_v2_wait_ready 60 || { oqa_pl_fail "server never became ready"; cat "$OQA_V2_SANDBOX/serve.out" >&2; return 1; }
   # The first-session race pin (PR #4): scenario A launches with NO settle
@@ -705,6 +847,7 @@ JSON
   # boundary itself, so L-04 proves the tool set the FIRST admitted session
   # sees rather than a post-registration state. The active poll below only
   # records the timestamp for L-01/L-20 after that boundary.
+  oqa_pl_wait_scenario_model "$PROJ_DIR" "$OQA_V2_SERVER_URL" "$OQA_V2_SERVER_PASS" || true
   local sid_a="" sid_b="" sid_c="" sid_locb=""
   oqa_pl_run_once a "v2 parity a" "Reply with exactly: OQA_A_FINAL" "$PROJ_DIR" && sid_a="$OQA_PL_SID" || return 1
   for i in $(seq 1 60); do
@@ -727,6 +870,12 @@ JSON
   oqa_pl_run_once locb "v2 parity locb" "Reply with exactly: OQA_LOC_B_FINAL" "$PROJ_B_DIR" && sid_locb="$OQA_PL_SID" || return 1
 
   oqa_pl_tui_smoke || true
+
+  # ---- steady window (the PR #4 post-activation pin): every location's
+  # plugin applied, the MCP servers connected; the registration must show
+  # ZERO reload events and ZERO reload writes before the host config change.
+  oqa_pl_steady_window_quiet "$TMPDIR/oh-my-opencode.log" "$(oqa_v2_log_path)/opencode.log" \
+    "$OQA_V2_SERVER_URL" "$OQA_V2_SERVER_PASS"
 
   # ---- L-03 agent captures (plan task 24): GET /api/agent before the host
   # config change, then a config rewrite (a probe agent in the agent section)
