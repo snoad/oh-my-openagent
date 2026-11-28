@@ -395,8 +395,33 @@ oqa_pl_reload_for_stats() {
     oqa_pl_fail "plugin reload produced no [opencode-v2] event stats line within 40s"
   fi
   mkdir -p "$ev_dir"
-  { grep '^\[opencode-v2\] event stats ' "$serve_out" 2>/dev/null || true; } > "$ev_dir/stats-lines.txt"
+  { grep '^\[opencode-v2] event stats ' "$serve_out" 2>/dev/null || true; } > "$ev_dir/stats-lines.txt"
   [ -n "$found" ]
+}
+
+# ---- registration convergence idle window (the PR #4 pin) -------------------
+# The host is idle when this runs: every scenario finished and the MCP
+# servers connected. The registration is converged only when the window
+# carries ZERO *.updated reload events on the wire and ZERO further
+# recomputes in the plugin log. The SSE subscription bounds the window
+# itself (curl -m), so no sleep drives it. OQA_PL_IDLE_WINDOW_SECS shrinks
+# the window for the self-test (default 32; the live phase budgets it under
+# the +40s driver cap).
+oqa_pl_idle_window_convergence() {
+  local plugin_log="$1" url="$2" pass="$3"
+  local window="${OQA_PL_IDLE_WINDOW_SECS:-32}"
+  local before after events
+  before="$(grep -c 'tool-registration: registered' "$plugin_log" 2>/dev/null)"
+  before="${before:-0}"
+  events="$(curl -s -N -m "$window" -u "opencode:$pass" "$url/api/event" 2>/dev/null \
+    | grep -c -E '"type":"(provider|model|agent|command)\.updated"' || true)"
+  after="$(grep -c 'tool-registration: registered' "$plugin_log" 2>/dev/null)"
+  after="${after:-0}"
+  if [ "$events" -eq 0 ] && [ "$after" -eq "$before" ]; then
+    oqa_pl_pass "registration idle window (${window}s): 0 reload events, 0 recomputes (registration converged)"
+  else
+    oqa_pl_fail "registration idle window (${window}s): $events reload events, $((after - before)) recomputes (registration did not converge)"
+  fi
 }
 
 # Import mode: the self-test sources this file to exercise the verdict
@@ -713,6 +738,11 @@ JSON
     [ -n "$ctx_sid" ] && oqa_v2_api GET "/api/session/$ctx_sid/context" \
       > "$EV_LIVE/context-$ctx_key.json" 2>/dev/null || true
   done
+
+  # The registration convergence pin: the host is idle here (every scenario
+  # finished, the MCP servers connected), so any reload event or recompute in
+  # this window is the registration failing to converge (PR #4).
+  oqa_pl_idle_window_convergence "$TMPDIR/oh-my-opencode.log" "$OQA_V2_SERVER_URL" "$OQA_V2_SERVER_PASS"
 
   # ---- shutdown, post-shutdown log copies, teardown, post phase ----
   oqa_v2_serve_stop

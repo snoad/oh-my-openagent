@@ -37,7 +37,9 @@
 #                    write-back, bun/ junk guard, reload-for-stats trigger
 #                    (step 1, step 2, never), V1 baseline recapture switch
 #                    (runs with the switch via a stubbed capture script,
-#                    never without it, fails fast on a failed capture)
+#                    never without it, fails fast on a failed capture),
+#                    registration idle window (PASS quiet, FAIL on a streamed
+#                    reload event, FAIL on a recompute landing in the log)
 #                    (driver sourced in import mode; no OC2 dependency)
 
 set -uo pipefail
@@ -773,12 +775,82 @@ driver_tests() {
   fi
   unset OQA_PL_PLUGIN_BUNDLE OQA_PL_RELOAD_POLL_SECS
 
-  # 6g. V1 baseline recapture: with the switch the driver invokes the baseline
-  # capture (stubbed capture script, no V1 host needed) before the sandbox;
-  # without the switch it never runs; a failing capture fails fast with the
-  # capture log in the evidence dir.
-  local recdir="$TMP/dtrecap" stub marker fails_before
-  mkdir -p "$recdir"
+  # 6g-bis. registration idle window (the PR #4 convergence pin): PASS on a
+  # quiet host, FAIL when a reload event hits the wire, FAIL when a recompute
+  # lands in the plugin log. The window length is shrunk for the self-test and
+  # the endpoints are real SSE streams (a non-streaming response would end
+  # the window instantly, the live phase streams /api/event).
+  local idledir hb_port hb_pid ev_port ev_pid app_pid fails_before
+  mkdir -p "$TMP/dtidle"
+  idledir="$TMP/dtidle"
+  EV_LIVE="$idledir"
+  OQA_PL_IDLE_WINDOW_SECS=2
+  printf '[ts] [opencode-v2] tool-registration: registered 14 plugin tools in 1ms\n' > "$idledir/plugin.log"
+  sse_server() {
+    node -e 'const http=require("http");const kind=process.argv[1];const body=kind==="events"?"data: {\"type\":\"provider.updated\"}\n\n":"data: {\"type\":\"heartbeat\"}\n\n";const s=http.createServer((req,res)=>{res.writeHead(200,{"Content-Type":"text/event-stream"});const t=setInterval(()=>res.write(body),100);res.on("close",()=>clearInterval(t))});s.listen(Number(process.argv[2]))' "$1" "$2" &
+  }
+  hb_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null || printf '41001')"
+  sse_server heartbeat "$hb_port"
+  hb_pid=$!
+  for i in $(seq 1 40); do
+    curl -sf -m 1 "http://127.0.0.1:$hb_port/api/event" >/dev/null 2>&1 && break
+    kill -0 "$hb_pid" 2>/dev/null || break
+    sleep 0.25
+  done
+  fails_before=$FAILS
+  if oqa_pl_idle_window_convergence "$idledir/plugin.log" "http://127.0.0.1:$hb_port/api/event" "stub-pass" \
+     && [ $((FAILS - fails_before)) -eq 0 ]; then
+    oqa_st_pass "driver: idle window PASSes on a quiet host (no events, no recomputes)"
+  else
+    bad "driver: idle window failed on a quiet host"
+  fi
+
+  ev_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null || printf '41002')"
+  sse_server events "$ev_port"
+  ev_pid=$!
+  for i in $(seq 1 40); do
+    curl -sf -m 1 "http://127.0.0.1:$ev_port/api/event" >/dev/null 2>&1 && break
+    kill -0 "$ev_pid" 2>/dev/null || break
+    sleep 0.25
+  done
+  fails_before=$FAILS
+  if oqa_pl_idle_window_convergence "$idledir/plugin.log" "http://127.0.0.1:$ev_port/api/event" "stub-pass"; then
+    bad "driver: idle window passed although reload events streamed"
+  else
+    if [ $((FAILS - fails_before)) -eq 1 ]; then
+      oqa_st_pass "driver: idle window FAILs truthfully when reload events stream"
+    else
+      bad "driver: idle window events-case did not report the failure truthfully"
+    fi
+  fi
+  kill "$ev_pid" 2>/dev/null || true
+  wait "$ev_pid" 2>/dev/null || true
+
+  printf 'seed\n' > "$idledir/growing.log"
+  ( sleep 0.5; printf '[ts] [opencode-v2] tool-registration: registered 14 plugin tools\n' >> "$idledir/growing.log" ) &
+  app_pid=$!
+  fails_before=$FAILS
+  if oqa_pl_idle_window_convergence "$idledir/growing.log" "http://127.0.0.1:$hb_port/api/event" "stub-pass"; then
+    bad "driver: idle window passed although a recompute landed in the plugin log"
+  else
+    if [ $((FAILS - fails_before)) -eq 1 ]; then
+      oqa_st_pass "driver: idle window FAILs truthfully when a recompute lands"
+    else
+      bad "driver: idle window recompute-case did not report the failure truthfully"
+    fi
+  fi
+  wait "$app_pid" 2>/dev/null || true
+  kill "$hb_pid" 2>/dev/null || true
+  wait "$hb_pid" 2>/dev/null || true
+  unset OQA_PL_IDLE_WINDOW_SECS EV_LIVE
+
+  # 6g-ter. V1 baseline recapture: with the switch the driver invokes the
+  # baseline capture (stubbed capture script, no V1 host needed) before the
+  # sandbox; without the switch it never runs; a failing capture fails fast
+  # with the capture log in the evidence dir.
+  local recdir stub marker
+  mkdir -p "$TMP/dtrecap"
+  recdir="$TMP/dtrecap"
   stub="$recdir/fake-v1-baseline.sh"
   marker="$recdir/capture-ran.marker"
   printf '#!/usr/bin/env bash\ntouch "%s"\n' "$marker" > "$stub"
