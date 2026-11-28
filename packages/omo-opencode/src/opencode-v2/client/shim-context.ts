@@ -56,6 +56,23 @@ export type V2ShimProviderInfo = {
   readonly name: string
 }
 
+export type V2ShimMcpServer = {
+  readonly name: string
+  readonly status: unknown
+}
+
+export type V2ShimCommandInfo = {
+  readonly name: string
+  readonly description?: string
+}
+
+export type V2ShimModelInfo = {
+  readonly id: string
+  readonly modelID: string
+  readonly providerID: string
+  readonly name: string
+}
+
 export type V2ShimContext = {
   readonly session: V2ShimSessionDomain
   readonly agent: {
@@ -64,7 +81,17 @@ export type V2ShimContext = {
   readonly tool: {
     readonly list: () => Promise<ReadonlyArray<V2ShimToolInfo>>
   }
+  readonly mcp: {
+    readonly list: () => Promise<{ readonly data: ReadonlyArray<V2ShimMcpServer> }>
+  }
+  readonly command: {
+    readonly list: () => Promise<{ readonly data: ReadonlyArray<V2ShimCommandInfo> }>
+  }
   readonly provider: {
     readonly list: () => Promise<{ readonly data: ReadonlyArray<V2ShimProviderInfo> }>
+  }
+  readonly model: {
+    readonly list: () => Promise<{ readonly data: ReadonlyArray<V2ShimModelInfo> }>
+    readonly default?: () => Promise<{ readonly data: V2ShimModelInfo | null }>
   }
 }

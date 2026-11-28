@@ -4,6 +4,7 @@ import type { V1SessionShimSurface } from "./v1-client-surface"
 import { v1NotFound, v1Success } from "./v1-client-surface"
 import { ensureSessionSnapshot, type SessionSnapshotCache } from "./session-snapshot-cache"
 import type { V2ShimContext } from "./shim-context"
+import { readSessionTodos } from "../registration/todo-store"
 
 // Non-prompt session methods of the V2 client shim (plan task 12): each routes
 // to the pinned 2.4.1 SessionDomain and answers in the V1 result envelope.
@@ -12,8 +13,9 @@ import type { V2ShimContext } from "./shim-context"
 // no session.status events; plan task 14 will feed the same map from its
 // subscription). session.children filters ctx.session.list() on the
 // parent-linkage (SessionInfo.parentID today; task 30 enriches it with
-// metadata) because 2.4.1 has no children method. session.todo answers the
-// empty V1 list until task 28 installs the plugin todo store.
+// metadata) because 2.4.1 has no children method. session.todo serves the
+// plugin todo store (task 29): the host ships no todo tool by default, so the
+// todos live in the session metadata under the reserved omo.todos key.
 
 const SESSION_ROUTE = "/session"
 const SESSION_ID_ROUTE = "/session/{id}"
@@ -87,8 +89,8 @@ export function createSessionLifecycleMethods(
       return v1Success(children, CHILDREN_ROUTE)
     },
 
-    async todo() {
-      return v1Success([], TODO_ROUTE)
+    async todo(options) {
+      return v1Success(await readSessionTodos(ctx, options.path.id), TODO_ROUTE)
     },
 
     async status() {

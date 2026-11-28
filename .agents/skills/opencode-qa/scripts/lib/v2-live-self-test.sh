@@ -10,20 +10,37 @@
 # {"status":"error","content":null,"error":{"type":"unknown","message":...}}
 # with the V1 guard message byte-for-byte, and the cleanup stats lines are
 # present in serve.out. Coverage:
-#   good live run    L-01/L-02/L-07/L-09/L-11/L-20/L-21/L-22/L-24 PASS,
-#                    L-08 PARTIAL (sisyphus line deferred), L-15/L-18 pending
+#   good live run    L-01/L-02/L-03/L-04/L-05/L-06/L-07/L-08/L-09/L-11/L-20/
+#                    L-21/L-22/L-23/L-24 PASS (the stub models the registered
+#                    state: the agents captures derive from the V1 baseline
+#                    fixtures, the main scenario A request carries the
+#                    sisyphus system first line and the registered tool set
+#                    minus the disabled_tools entry, GET /api/mcp lists the
+#                    four tier-1 servers and the connected secret probe, the
+#                    L-05 tools/list half drives the REAL lsp server, and
+#                    GET /api/command lists the expected fixture commands
+#                    with the stub appending the interception marker on a
+#                    command submission),
+#                    L-15/L-18 pending
 #   good post run    L-15 PASS (ambient sessions tolerated; absent system
 #                    opencode = version clause not applicable), L-11 PASS
-#                    (stats line, translated > 0), L-24 PASS (bound holds)
+#                    (stats line, translated > 0), L-24 PASS (bound holds),
+#                    L-10 PASS (scripted grep call, string result), L-16 PASS
+#                    (disabled_tools entry across the host config change)
 #   broken runs      one targeted mutation per FAIL case (see the case list
-#                    in main) plus the L-08 full-strength PASS case, the
-#                    L-15 absent-opencode PASS case (with its evidence line)
-#                    and the L-15 version-changed FAIL case, and the L-22
+#                    in main: L-05 server/tool missing, L-23 token leak plus
+#                    the two vacuous-pass guards) plus the L-15
+#                    absent-opencode PASS case (with its evidence line), the
+#                    L-15 version-changed FAIL case and the L-22
 #                    process-wide STOP verdict
 #   driver tests     truthful final line, --strict gate, L-18 verdict
 #                    write-back, bun/ junk guard, reload-for-stats trigger
-#                    (step 1, step 2, never) (driver sourced in import mode;
-#                    no OC2 dependency)
+#                    (step 1, step 2, never), V1 baseline recapture switch
+#                    (runs with the switch via a stubbed capture script,
+#                    never without it, fails fast on a failed capture),
+#                    registration idle window (PASS quiet, FAIL on a streamed
+#                    reload event, FAIL on a recompute landing in the log)
+#                    (driver sourced in import mode; no OC2 dependency)
 
 set -uo pipefail
 
@@ -42,9 +59,28 @@ FAILS=0
 
 STUB_PID=""
 STUB_PORT=""
+SSE_PIDFILE=""
 TMP=""
 
+# Kills one backgrounded SSE stub by pid. The stub is started under a process
+# substitution, so it is not a child of this shell and wait cannot join it;
+# confirm death with a bounded kill -0 poll and escalate to -9.
+oqa_st_stop_sse_pid() {
+  local pid="$1" i
+  [ -n "$pid" ] || return 0
+  kill "$pid" 2>/dev/null || true
+  for i in $(seq 1 20); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.1
+  done
+  kill -9 "$pid" 2>/dev/null || true
+}
+
 cleanup() {
+  if [ -s "$SSE_PIDFILE" ]; then
+    oqa_st_stop_sse_pid "$(cat "$SSE_PIDFILE" 2>/dev/null || true)"
+    rm -f "$SSE_PIDFILE"
+  fi
   [ -n "$STUB_PID" ] && kill "$STUB_PID" 2>/dev/null || true
   if [ -z "${OQA_ST_KEEP:-}" ]; then
     [ -n "$TMP" ] && rm -rf "$TMP" || true
@@ -72,7 +108,7 @@ start_stub() {
 run_runner() {
   local dir="$1" manifest="$2" out="$3" extra="${4:-}"
   mkdir -p "$out"
-  ( cd "$REPO_ROOT" && bun "$RUNNER" --wave 2 --api "http://127.0.0.1:$STUB_PORT" \
+  ( cd "$REPO_ROOT" && bun "$RUNNER" --wave 3 --api "http://127.0.0.1:$STUB_PORT" \
       --password stub-pass --plugin-log "$dir/serve.out" --host-log "$dir/host.log" \
       --manifest "$manifest" --out "$out" $extra ) > "$out/runner.out" 2>&1
   return $?
@@ -143,6 +179,11 @@ oqa_st_sisyphus_first_line() {
   jq -r '.sisyphus' "$FIXTURES_ROOT/agent-prompts.json" 2>/dev/null | head -1
 }
 
+oqa_st_sisyphus_identity_line() {
+  jq -r '.sisyphus | split("</omo-model-core>")[1] | split("\n") | map(select(startswith("You are \""))) | .[0] // empty' \
+    "$FIXTURES_ROOT/agent-prompts.json" 2>/dev/null
+}
+
 write_good_dir() {
   local dir="$1" start first_seen
   mkdir -p "$dir/req-a" "$dir/req-b" "$dir/proj-a" "$dir/proj-b"
@@ -151,6 +192,20 @@ write_good_dir() {
   cat > "$dir/plugin.json" <<JSON
 {"location":{"directory":"$dir"},"data":[{"id":"oh-my-openagent","source":{"type":"local","path":"$dir"},"features":{"server":true},"state":{"status":"active"}}]}
 JSON
+  # The real 2.4.1 GET /api/mcp answer shape is the {location, data} envelope
+  # with McpServer rows ({name, status: {status}}); both stdio servers model
+  # the connected state of the real lsp-tools-mcp server the driver registers
+  # as the secret probe.
+  cat > "$dir/mcp.json" <<JSON
+{"location":{"directory":"$dir"},"data":[
+ {"name":"websearch","status":{"status":"connected"}},
+ {"name":"context7","status":{"status":"connected"}},
+ {"name":"grep_app","status":{"status":"connected"}},
+ {"name":"lsp","status":{"status":"connected"}},
+ {"name":"oqa-secret-probe","status":{"status":"connected"}}]}
+JSON
+  # The L-23 per-run token value (a stub value, never a real secret).
+  printf 'st9UBq7wXk2Rm4Zq' > "$dir/sandbox-token.txt"
   cat > "$dir/context-ses_stub_b.json" <<JSON
 {"data":[{"id":"m1","type":"user","text":"Read parity-file.txt"},{"id":"m2","type":"assistant","agent":"build","content":[{"type":"tool","id":"call_1","name":"read","state":{"status":"completed","input":{"path":"$dir/proj-a/parity-file.txt"},"content":[{"type":"text","text":"1#NS|parity row nine file\n2#HP|second line"}],"metadata":{"truncated":false}}}]}]}
 JSON
@@ -190,10 +245,62 @@ LOG
   cat > "$dir/plugin-file.log" <<'LOG'
 [bash-file-read-guard] warned on bash file read command {"sessionID":"ses_stub_c","command":"cat /tmp/probe.txt"}
 LOG
-  cat > "$dir/req-a/requests.jsonl" <<'JSONL'
-{"model":"gpt-fake","input":[{"type":"message","role":"developer","content":"You are a host default agent prompt."},{"type":"message","role":"user","content":[{"type":"input_text","text":"Reply with exactly: OQA_A_FINAL"}]}],"tools":[{"type":"function","name":"read"}]}
-{"model":"gpt-fake","input":[{"type":"message","role":"developer","content":"You are a host default agent prompt."}],"tools":[]}
-JSONL
+  # The registered state: the main scenario A request (tools non-empty)
+  # carries the default agent's (sisyphus) system first line as the developer
+  # content and the registered tool set derived from the V1 baseline fixture
+  # (host-only names and the disabled_tools entry excluded); the aux request
+  # keeps the host placeholder.
+  printf '%s\n' '{ "[opencode]": { "disabled_tools": ["look_at"], "mcp_env_allowlist": ["OQA_SECRET_TOKEN"] } }' > "$dir/omo.jsonc"
+  # The L-06 command surface: the real 2.4.1 GET /api/command answer shape
+  # ({data: [{name, description}]}) over the committed expected fixture.
+  jq -c '{data: [.[] | {name: ., description: "stub command"}]}' \
+    "$REPO_ROOT/packages/omo-opencode/src/opencode-v2/parity/fixtures/expected/commands.json" \
+    > "$dir/command.json"
+  local sisyphus_line identity_line tools_json
+  sisyphus_line="$(oqa_st_sisyphus_first_line)"
+  identity_line="$(oqa_st_sisyphus_identity_line)"
+  jq -c '[.tools | map({key: .id, value: {type: "function", name: .id, parameters: .parameters}}) | from_entries | to_entries[].value]
+    | map(select((.name | IN("bash", "read", "write", "question", "todowrite", "webfetch", "invalid", "look_at")) | not))' \
+    "$FIXTURES_ROOT/tools.json" > "$dir/req-a/tools.json"
+  tools_json="$(cat "$dir/req-a/tools.json")"
+  jq -n --arg line "$sisyphus_line" --arg identity "$identity_line" --argjson tools "$tools_json" '({
+    model: "gpt-fake",
+    input: [
+      {type: "message", role: "developer", content: $line},
+      {type: "message", role: "developer", content: $identity},
+      {type: "message", role: "user", content: [{type: "input_text", text: "Reply with exactly: OQA_A_FINAL"}]}
+    ],
+    tools: $tools
+  }), ({
+    model: "gpt-fake",
+    input: [{type: "message", role: "developer", content: "You are a host default agent prompt."}],
+    tools: []
+  })' -c > "$dir/req-a/requests.jsonl"
+  # The L-03 default-agent session surface: scenario A ran under sisyphus.
+  printf '{"data":[{"id":"msg_1","role":"assistant","agent":"sisyphus","content":[{"type":"text","text":"OQA_A_FINAL"}]}]}\n' > "$dir/context-a.json"
+  # L-10 (scenario d): the scripted grep function_call with its V1-shaped
+  # string function_call_output.
+  mkdir -p "$dir/req-d" "$dir/req-e"
+  jq -n --arg out "Found 1 match
+$dir/proj-a/parity-file.txt:1: parity row nine file" -c '({
+    model: "gpt-fake",
+    input: [
+      {type: "message", role: "user", content: [{type: "input_text", text: "Search the project for the word parity"}]},
+      {type: "function_call", name: "grep", call_id: "call_grep_stub", arguments: "{\"pattern\":\"parity\"}"},
+      {type: "function_call_output", call_id: "call_grep_stub", output: $out}
+    ],
+    tools: []
+  })' > "$dir/req-d/requests.jsonl"
+  # L-16 (scenario e): the tool capture after the host config change, same
+  # disabled_tools effect as scenario a.
+  jq -n --argjson tools "$tools_json" -c '({
+    model: "gpt-fake",
+    input: [
+      {type: "message", role: "developer", content: "You are a host default agent prompt."},
+      {type: "message", role: "user", content: [{type: "input_text", text: "Reply with exactly: OQA_E_FINAL"}]}
+    ],
+    tools: $tools
+  })' > "$dir/req-e/requests.jsonl"
   cat > "$dir/req-b/requests.jsonl" <<'JSONL'
 {"model":"gpt-fake","input":[{"type":"message","role":"developer","content":"You are a host default agent prompt."},{"type":"message","role":"user","content":[{"type":"input_text","text":"Read parity-file.txt"}]}],"tools":[{"type":"function","name":"read"}]}
 JSONL
@@ -216,6 +323,30 @@ data: {"type":"session.execution.completed","data":{"sessionID":"ses_stub_b"}}
 
 SSE
   printf 'Ask anything\n' > "$dir/tui-smoke.log"
+
+  # The registered-state agent captures (L-03): derived from the committed V1
+  # baseline fixtures, one entry per unique baseline id with the visible row's
+  # flags and the fixture prompt bytes; the after capture adds the hot agent.
+  # The real 2.4.1 GET /api/agent answer lists agents in insertion order, so
+  # the stub keeps the fixture row order (the reduce dedupe preserves first
+  # hits; group_by/unique_by would sort and break the L-03 order assertion).
+  jq -c '[.[] | select(.hidden != true or .native == true)]
+    | reduce .[] as $row ([]; if ([.[] | .id] | index($row.id)) == null then . + [$row] else . end)
+    | .[] | {id, name, mode, hidden: (.hidden == true), request: {}}' \
+    "$FIXTURES_ROOT/agents.json" > "$dir/agents-rows.jsonl"
+  jq -R -s 'split("\n") | map(select(length > 0) | fromjson)' "$dir/agents-rows.jsonl" > "$dir/agents-rows.json"
+  # The real 2.4.1 GET /api/agent answer shape is the {data: [...]} envelope.
+  jq -c --slurpfile prompts "$FIXTURES_ROOT/agent-prompts.json" \
+    '{data: map(. + {system: ($prompts[0][.id] // null), permissions: []})}' "$dir/agents-rows.json" > "$dir/agents-before.json"
+  jq -c '.data + [{"id":"oqa-hot-agent","name":"Oqa-Hot-Agent","mode":"subagent","hidden":false,"system":"hot probe prompt","permissions":[]}] | {data: .}' \
+    "$dir/agents-before.json" > "$dir/agents-after.json"
+  cp "$dir/agents-before.json" "$dir/agents.json"
+  rm -f "$dir/agents-rows.jsonl" "$dir/agents-rows.json"
+  local before_count after_count
+  before_count="$(jq '.data | length' "$dir/agents-before.json")"
+  after_count="$(jq '.data | length' "$dir/agents-after.json")"
+  [ "$before_count" -gt 0 ] || { oqa_st_log "agents-before capture is empty"; return 1; }
+
   cat > "$dir/manifest.json" <<JSON
 {
   "wave": 2,
@@ -225,7 +356,9 @@ SSE
   "scenarios": {
     "a": {"sessionID": "ses_stub_a", "prompt": "Reply with exactly: OQA_A_FINAL", "requestsFile": "$dir/req-a/requests.jsonl", "eventsFile": "$dir/events-a.sse", "directory": "$dir/proj-a"},
     "b": {"sessionID": "ses_stub_b", "prompt": "Read parity-file.txt", "requestsFile": "$dir/req-b/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a"},
-    "c": {"sessionID": "ses_stub_c", "prompt": "Run cat", "requestsFile": "$dir/req-b/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a", "file": "$dir/proj-a/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n"}
+    "c": {"sessionID": "ses_stub_c", "prompt": "Run cat", "requestsFile": "$dir/req-b/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a", "file": "$dir/proj-a/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n"},
+    "d": {"sessionID": "ses_stub_d", "prompt": "Search the project for the word parity", "requestsFile": "$dir/req-d/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a", "file": "$dir/proj-a/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n"},
+    "e": {"sessionID": "ses_stub_e", "prompt": "Reply with exactly: OQA_E_FINAL", "requestsFile": "$dir/req-e/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a"}
   },
   "locations": [
     {"name": "serve", "directory": "$dir/serve"},
@@ -234,8 +367,16 @@ SSE
   ],
   "tuiSmokeLog": "$dir/tui-smoke.log",
   "pluginFileLog": "$dir/plugin-file.log",
+  "agentsBeforeFile": "$dir/agents-before.json",
+  "agentsAfterFile": "$dir/agents-after.json",
+  "contextAFile": "$dir/context-a.json",
+  "hotAgentId": "oqa-hot-agent",
+  "sandboxOmoConfig": "$dir/omo.jsonc",
+  "mcpApiCaptureFile": "$dir/mcp.json",
+  "commandApiCaptureFile": "$dir/command.json",
+  "secretTokenFile": "$dir/sandbox-token.txt",
   "sandboxPath": "$dir/sandbox-gone",
-  "scriptedSteps": {"a": 1, "b": 2, "c": 2}
+  "scriptedSteps": {"a": 1, "b": 2, "c": 2, "d": 2, "e": 1}
 }
 JSON
   mkdir -p "$dir/sandbox-gone-kept"
@@ -248,10 +389,17 @@ JSON
   "scenarios": {
     "a": {"sessionID": "ses_stub_a", "prompt": "Reply with exactly: OQA_A_FINAL", "requestsFile": "$dir/req-a/requests.jsonl", "eventsFile": "$dir/events-a.sse", "directory": "$dir/proj-a"},
     "b": {"sessionID": "ses_stub_b", "prompt": "Read parity-file.txt", "requestsFile": "$dir/req-b/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a"},
-    "c": {"sessionID": "ses_stub_c", "prompt": "Run cat", "requestsFile": "$dir/req-b/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a", "file": "$dir/proj-a/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n"}
+    "c": {"sessionID": "ses_stub_c", "prompt": "Run cat", "requestsFile": "$dir/req-b/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a", "file": "$dir/proj-a/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n"},
+    "d": {"sessionID": "ses_stub_d", "prompt": "Search the project for the word parity", "requestsFile": "$dir/req-d/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a", "file": "$dir/proj-a/parity-file.txt", "fileContent": "parity row nine file\nsecond line\n"},
+    "e": {"sessionID": "ses_stub_e", "prompt": "Reply with exactly: OQA_E_FINAL", "requestsFile": "$dir/req-e/requests.jsonl", "eventsFile": "$dir/events-b.sse", "directory": "$dir/proj-a"}
   },
   "locations": [],
   "pluginFileLog": "$dir/plugin-file.log",
+  "agentsBeforeFile": "$dir/agents-before.json",
+  "agentsAfterFile": "$dir/agents-after.json",
+  "contextAFile": "$dir/context-a.json",
+  "hotAgentId": "oqa-hot-agent",
+  "sandboxOmoConfig": "$dir/omo.jsonc",
   "sandboxPath": "$dir/sandbox-gone",
   "isolation": {
     "systemVersionBefore": "1.19.4",
@@ -288,22 +436,24 @@ main() {
   local good="$TMP/good"
   write_good_dir "$good"
 
-  # 1. all-good live phase: executed rows PASS, L-08 PARTIAL, L-15/L-18 pending
+  # 1. all-good live phase: executed rows PASS, pending rows stay pending
   start_stub "$good" || { oqa_st_fail "stub did not start"; return 1; }
   run_runner "$good" "$good/manifest.json" "$good/out-live" || true
   local results="$good/out-live/results.json"
-  for row in L-01 L-02 L-07 L-09 L-11 L-20 L-21 L-22 L-24; do
+  for row in L-01 L-02 L-03 L-04 L-05 L-06 L-07 L-08 L-09 L-11 L-20 L-21 L-22 L-23 L-24; do
     expect_row "$results" "$row" "true" "good live"
   done
-  expect_row "$results" "L-08" "partial" "good live"
   expect_row "$results" "L-15" "pending" "good live"
   expect_row "$results" "L-18" "pending" "good live"
 
-  # 2. all-good post phase: L-15 PASS (ambient tolerated), L-11/L-24 PASS
+  # 2. all-good post phase: L-15 PASS (ambient tolerated), L-11/L-24 PASS,
+  #    L-10 (scripted grep call) and L-16 (disabled_tools) PASS
   run_runner "$good" "$good/post-manifest.json" "$good/out-live" "--post" || true
   expect_row "$good/out-live/results.json" "L-15" "true" "good post"
   expect_row "$good/out-live/results.json" "L-11" "true" "good post"
   expect_row "$good/out-live/results.json" "L-24" "true" "good post"
+  expect_row "$good/out-live/results.json" "L-10" "true" "good post"
+  expect_row "$good/out-live/results.json" "L-16" "true" "good post"
 
   # 3. broken case per strictened check (targeted row must FAIL).
   #    post=1 runs live then post so the cleanup-stats gates are evaluated.
@@ -331,18 +481,44 @@ main() {
   broken_case "L-08" "system-marker-missing" \
     "sed -i '/hook experimental.chat.system.transform fired/d' '$TMP/case-L-08-system-marker-missing/serve.out'"
 
-  # 3b. L-08 full-strength PASS case: the sisyphus first line present in the
-  # first fake model request turns the partial verdict into PASS.
-  local dir="$TMP/case-L-08-full"
-  cp -r "$good" "$dir"; rm -rf "$dir/out-live" "$dir/out"
-  rebase_case "$dir" "$good" "$dir"
-  local sisyphus_line
-  sisyphus_line="$(oqa_st_sisyphus_first_line)"
-  jq -c --arg line "$sisyphus_line" '.input[0].content = $line' \
-    "$dir/req-a/requests.jsonl" > "$dir/req.jsonl.tmp" && mv "$dir/req.jsonl.tmp" "$dir/req-a/requests.jsonl"
-  start_stub "$dir" || { oqa_st_fail "L-08 full: stub did not start"; return 1; }
-  run_runner "$dir" "$dir/manifest.json" "$dir/out" || true
-  expect_row "$dir/out/results.json" "L-08" "true" "L-08 full-strength"
+  # The L-08 full-strength PASS is the good live run itself since the stub
+  # models the registered state (the sisyphus first line is in the main
+  # request). L-03 FAIL cases: a baseline agent dropped from the after
+  # capture, a mutated prompt byte, and the missing after-capture manifest
+  # entry ("not proven" never passes).
+  broken_case "L-03" "after-agent-dropped" \
+    "jq '.data |= map(select(.id != \"librarian\"))' '$TMP/case-L-03-after-agent-dropped/agents-after.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-03-after-agent-dropped/agents-after.json'"
+  broken_case "L-03" "after-prompt-byte-mutated" \
+    "jq '(.data[] | select(.id == \"sisyphus\") | .system) |= (.[0:8] + \"XX\" + .[10:])' '$TMP/case-L-03-after-prompt-byte-mutated/agents-after.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-03-after-prompt-byte-mutated/agents-after.json'"
+  broken_case "L-03" "after-capture-missing" \
+    "jq 'del(.agentsAfterFile)' '$TMP/case-L-03-after-capture-missing/manifest.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-03-after-capture-missing/manifest.json'"
+
+  # L-04 FAIL cases: a baseline plugin tool dropped from the capture, and a
+  # JSON Schema drift on a registered tool.
+  broken_case "L-04" "tool-dropped" \
+    "jq -c 'if has(\"tools\") and (.tools | type) == \"array\" then .tools |= map(select(.name != \"skill\")) else . end' '$TMP/case-L-04-tool-dropped/req-a/requests.jsonl' > '$TMP/x.jsonl' && mv '$TMP/x.jsonl' '$TMP/case-L-04-tool-dropped/req-a/requests.jsonl'"
+  broken_case "L-04" "schema-drift" \
+    "jq -c 'if has(\"tools\") and (.tools | type) == \"array\" then .tools |= map(if .name == \"grep\" then .parameters.type = \"string\" else . end) else . end' '$TMP/case-L-04-schema-drift/req-a/requests.jsonl' > '$TMP/x.jsonl' && mv '$TMP/x.jsonl' '$TMP/case-L-04-schema-drift/req-a/requests.jsonl'"
+
+  # L-06 FAIL case: an expected plugin command missing from GET /api/command.
+  broken_case "L-06" "command-dropped" \
+    "jq -c '.data |= map(select(.name != \"goal\"))' '$TMP/case-L-06-command-dropped/command.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-06-command-dropped/command.json'"
+
+  # L-10 FAIL cases (post phase): the function_call gone, and a result text
+  # that is not the V1-shaped grep output.
+  broken_case "L-10" "call-missing" \
+    "jq -c '.input |= map(select(.type != \"function_call\"))' '$TMP/case-L-10-call-missing/req-d/requests.jsonl' > '$TMP/x.jsonl' && mv '$TMP/x.jsonl' '$TMP/case-L-10-call-missing/req-d/requests.jsonl'" 1
+  broken_case "L-10" "output-text-drift" \
+    "jq -c '(.input[] | select(.type == \"function_call_output\") | .output) |= \"unrelated text\"' '$TMP/case-L-10-output-text-drift/req-d/requests.jsonl' > '$TMP/x.jsonl' && mv '$TMP/x.jsonl' '$TMP/case-L-10-output-text-drift/req-d/requests.jsonl'" 1
+
+  # L-16 FAIL cases (post phase): the disabled probe visible in the after
+  # capture, the control tool gone, and the after scenario missing entirely.
+  broken_case "L-16" "after-disabled-visible" \
+    "jq -c '.tools += [{type: \"function\", name: \"look_at\"}]' '$TMP/case-L-16-after-disabled-visible/req-e/requests.jsonl' > '$TMP/x.jsonl' && mv '$TMP/x.jsonl' '$TMP/case-L-16-after-disabled-visible/req-e/requests.jsonl'" 1
+  broken_case "L-16" "after-control-missing" \
+    "jq -c '.tools |= map(select(.name != \"grep\"))' '$TMP/case-L-16-after-control-missing/req-e/requests.jsonl' > '$TMP/x.jsonl' && mv '$TMP/x.jsonl' '$TMP/case-L-16-after-control-missing/req-e/requests.jsonl'" 1
+  broken_case "L-16" "after-scenario-missing" \
+    "jq 'del(.scenarios.e)' '$TMP/case-L-16-after-scenario-missing/post-manifest.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-16-after-scenario-missing/post-manifest.json'" 1
 
   broken_case "L-09" "read-tag-missing" \
     "oqa_st_write_ctx_b_notag '$TMP/case-L-09-read-tag-missing'"
@@ -370,6 +546,21 @@ main() {
     "oqa_st_del_stats_lines '$TMP/case-L-24-stats-line-missing/serve.out'" 1
   broken_case "L-24" "bound-violated" \
     "oqa_st_set_stats '$TMP/case-L-24-bound-violated/serve.out' '$TMP/case-L-24-bound-violated/proj-a' 42 40 10 2 999 0" 1
+
+  # L-05 FAIL case: a tier-1 server missing from both GET /api/mcp and the
+  # host log (the lsp_status tools/list half drives the REAL lsp server, so
+  # it has no offline mutation seam; it runs in every case).
+  broken_case "L-05" "lsp-server-missing" \
+    "jq '.data |= map(select(.name != \"lsp\"))' '$TMP/case-L-05-lsp-server-missing/mcp.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-05-lsp-server-missing/mcp.json' && sed -i '/server=lsp /d' '$TMP/case-L-05-lsp-server-missing/host.log'"
+
+  # L-23 FAIL cases: the token value leaks into serve.out, and the two
+  # vacuous-pass guards (missing token file, missing allowlist entry).
+  broken_case "L-23" "token-in-serve-out" \
+    "printf '%s\n' 'probe env {OQA_SECRET_TOKEN: st9UBq7wXk2Rm4Zq}' >> '$TMP/case-L-23-token-in-serve-out/serve.out'"
+  broken_case "L-23" "token-file-missing" \
+    "jq 'del(.secretTokenFile)' '$TMP/case-L-23-token-file-missing/manifest.json' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-23-token-file-missing/manifest.json'"
+  broken_case "L-23" "allowlist-missing" \
+    "jq 'del(.\"[opencode]\".\"mcp_env_allowlist\")' '$TMP/case-L-23-allowlist-missing/omo.jsonc' > '$TMP/x.json' && mv '$TMP/x.json' '$TMP/case-L-23-allowlist-missing/omo.jsonc'"
 
   # 4. L-15 broken post phases: sandbox still exists, and a real leak row.
   local dir="$TMP/case-L-15-sandbox"
@@ -602,6 +793,301 @@ driver_tests() {
     fi
   fi
   unset OQA_PL_PLUGIN_BUNDLE OQA_PL_RELOAD_POLL_SECS
+
+  # 6g-bis. registration idle window (the PR #4 convergence pin, quiet-tail
+  # rule): PASS on a quiet host, PASS when events only land in the first half
+  # (one absorbed late host change), FAIL on an event in the last half, FAIL
+  # on a reload-relevant plugin write in the last half. Every case asserts on
+  # the message text AND on the saved digest (idle-window.txt) and capture
+  # (idle-window.sse). The window length is shrunk for the self-test and the
+  # endpoints are real SSE streams (a non-streaming response would end the
+  # window instantly, the live phase streams /api/event).
+  local idledir ev_port ev_pid app_pid fails_before out rc
+  mkdir -p "$TMP/dtidle"
+  idledir="$TMP/dtidle"
+  EV_LIVE="$idledir"
+  OQA_PL_IDLE_WINDOW_SECS=2
+  # The SSE stubs record their pid here; start_sse afterEach-kills the
+  # previous one and the EXIT trap kills the last one on any exit path.
+  SSE_PIDFILE="$TMP/sse.pid"
+  # SSE stub: sends each "type@seconds" event of the comma schedule once,
+  # then heartbeats every 100 ms keep the stream open (a non-streaming
+  # response would end the window instantly).
+  sse_server() {
+    node -e '
+      const http = require("http");
+      const port = Number(process.argv[1]);
+      const sched = (process.argv[2] || "").split(",").filter(Boolean).map((s) => {
+        const [type, at] = s.split("@");
+        return { type, at: Number(at) * 1000 };
+      });
+      const srv = http.createServer((req, res) => {
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        const timers = sched.map((ev) => setTimeout(
+          () => res.write(`data: {"type":"${ev.type}","data":{"location":{"directory":"stub-loc"}}}\n\n`),
+          ev.at,
+        ));
+        const hb = setInterval(() => res.write("data: {\"type\":\"heartbeat\"}\n\n"), 100);
+        res.on("close", () => { timers.forEach(clearTimeout); clearInterval(hb); });
+      });
+      srv.listen(port, "127.0.0.1");
+    ' "$1" "$2" &
+  }
+  wait_sse() {
+    local port="$1" pid="$2" i
+    for i in $(seq 1 20); do
+      kill -0 "$pid" 2>/dev/null || return 1
+      curl -s -m 1 -o /dev/null "http://127.0.0.1:$port/api/event" 2>/dev/null
+      # rc 0 or 28 (the -m cutoff on an open stream) both prove the listener
+      # is up; a refused connection retries.
+      case "$?" in 0|28) return 0 ;; esac
+      sleep 0.25
+    done
+    return 1
+  }
+  start_sse() {
+    local port pid
+    # afterEach for the previous case: kill the still-recorded stub before
+    # starting the next one (covers early returns from a failing case).
+    if [ -s "$SSE_PIDFILE" ]; then
+      oqa_st_stop_sse_pid "$(cat "$SSE_PIDFILE" 2>/dev/null || true)"
+      rm -f "$SSE_PIDFILE"
+    fi
+    port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null || printf '41001')"
+    sse_server "$port" "$1"
+    pid=$!
+    # The pid lands in the file before the readiness wait so the EXIT trap can
+    # kill the stub even if this case fails mid-start.
+    printf '%s\n' "$pid" > "$SSE_PIDFILE"
+    wait_sse "$port" "$pid" || { oqa_st_stop_sse_pid "$pid"; rm -f "$SSE_PIDFILE"; return 1; }
+    printf '%s %s\n' "$port" "$pid"
+  }
+  idle_run() {
+    # File redirection, not command substitution: $() runs the pin in a
+    # subshell and the shared FAILS increment of oqa_pl_fail would be lost.
+    oqa_pl_idle_window_convergence "$1" "$2" "$3" > "$TMP/idle-msg.out" 2>&1
+  }
+
+  # case 1: quiet window -> PASS with 0/0 in both halves and a saved capture.
+  printf '[ts] [opencode-v2] tool-registration: registered 14 plugin tools in 1ms\n' > "$idledir/plugin.log"
+  read -r ev_port ev_pid < <(start_sse "") || { oqa_st_fail "idle case 1: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
+  fails_before=$FAILS
+  idle_run "$idledir/plugin.log" "http://127.0.0.1:$ev_port/api/event" "stub-pass"; rc=$?
+  out="$(cat "$TMP/idle-msg.out" 2>/dev/null || true)"
+  if [ "$rc" -eq 0 ] && [ $((FAILS - fails_before)) -eq 0 ] \
+     && printf '%s' "$out" | grep -qF 'registration idle window (2s): last 1s quiet' \
+     && printf '%s' "$out" | grep -qF 'registration converged' \
+     && [ -s "$idledir/idle-window.sse" ] \
+     && grep -qF 'verdict=PASS' "$idledir/idle-window.txt" \
+     && grep -qF 'events_last_half=0' "$idledir/idle-window.txt" \
+     && grep -qF 'plugin_writes_last_half=0' "$idledir/idle-window.txt"; then
+    oqa_st_pass "driver: idle window PASSes on a quiet host and saves the capture + digest"
+  else
+    bad "driver: idle window failed on a quiet host (rc=$rc out=$out)"
+  fi
+  oqa_st_stop_sse_pid "$ev_pid"
+
+  # case 2: events only in the first half (one absorbed late host change) -> PASS.
+  read -r ev_port ev_pid < <(start_sse "provider.updated@0.2,model.updated@0.4") || { oqa_st_fail "idle case 2: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
+  fails_before=$FAILS
+  idle_run "$idledir/plugin.log" "http://127.0.0.1:$ev_port/api/event" "stub-pass"; rc=$?
+  out="$(cat "$TMP/idle-msg.out" 2>/dev/null || true)"
+  if [ "$rc" -eq 0 ] && [ $((FAILS - fails_before)) -eq 0 ] \
+     && printf '%s' "$out" | grep -qF 'registration converged' \
+     && grep -qF 'events_first_half=2' "$idledir/idle-window.txt" \
+     && grep -qF 'events_last_half=0' "$idledir/idle-window.txt" \
+     && grep -qF 'event ' "$idledir/idle-window.txt" \
+     && grep -qF 'provider.updated' "$idledir/idle-window.txt" \
+     && grep -qF 'stub-loc' "$idledir/idle-window.txt"; then
+    oqa_st_pass "driver: idle window PASSes when events only land in the first half (digest names type + location)"
+  else
+    bad "driver: idle window failed on a first-half-only event burst (rc=$rc out=$out)"
+  fi
+  oqa_st_stop_sse_pid "$ev_pid"
+
+  # case 3: one counted event in the last half -> FAIL with the digest naming it.
+  read -r ev_port ev_pid < <(start_sse "command.updated@1.4") || { oqa_st_fail "idle case 3: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
+  fails_before=$FAILS
+  idle_run "$idledir/plugin.log" "http://127.0.0.1:$ev_port/api/event" "stub-pass"; rc=$?
+  out="$(cat "$TMP/idle-msg.out" 2>/dev/null || true)"
+  if [ "$rc" -ne 0 ] && [ $((FAILS - fails_before)) -eq 1 ] \
+     && printf '%s' "$out" | grep -qF 'registration idle window (2s): last 1s not quiet' \
+     && printf '%s' "$out" | grep -qF '(events first half: 0, last half: 1; plugin writes first half: 0, last half: 0)' \
+     && printf '%s' "$out" | grep -qF 'registration did not converge' \
+     && grep -qF 'verdict=FAIL' "$idledir/idle-window.txt" \
+     && grep -qF 'events_last_half=1' "$idledir/idle-window.txt" \
+     && grep -qF 'command.updated' "$idledir/idle-window.txt" \
+     && [ -s "$idledir/idle-window.sse" ]; then
+    oqa_st_pass "driver: idle window FAILs truthfully on a last-half event and the digest names it"
+  else
+    bad "driver: idle window events-case did not fail truthfully (rc=$rc out=$out)"
+  fi
+  oqa_st_stop_sse_pid "$ev_pid"
+
+  # case 4: one reload-relevant plugin write in the last half -> FAIL and the
+  # digest quotes the gained line.
+  read -r ev_port ev_pid < <(start_sse "") || { oqa_st_fail "idle case 4: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
+  printf 'seed\n' > "$idledir/plugin.log"
+  ( sleep 1.3; printf '[%s] [opencode-v2] tool-registration: registered 14 plugin tools in 1ms\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$idledir/plugin.log" ) &
+  app_pid=$!
+  fails_before=$FAILS
+  idle_run "$idledir/plugin.log" "http://127.0.0.1:$ev_port/api/event" "stub-pass"; rc=$?
+  out="$(cat "$TMP/idle-msg.out" 2>/dev/null || true)"
+  wait "$app_pid" 2>/dev/null || true
+  if [ "$rc" -ne 0 ] && [ $((FAILS - fails_before)) -eq 1 ] \
+     && printf '%s' "$out" | grep -qF '(events first half: 0, last half: 0; plugin writes first half: 0, last half: 1)' \
+     && printf '%s' "$out" | grep -qF 'registration did not converge' \
+     && grep -qF 'verdict=FAIL' "$idledir/idle-window.txt" \
+     && grep -qF 'plugin_writes_last_half=1' "$idledir/idle-window.txt" \
+     && grep -qF 'tool-registration: registered' "$idledir/idle-window.txt"; then
+    oqa_st_pass "driver: idle window FAILs truthfully on a last-half plugin write and the digest quotes the line"
+  else
+    bad "driver: idle window write-case did not fail truthfully (rc=$rc out=$out)"
+  fi
+  oqa_st_stop_sse_pid "$ev_pid"
+  unset OQA_PL_IDLE_WINDOW_SECS EV_LIVE
+
+  # 6g-quater. registration steady window (the PR #4 post-activation pin):
+  # PASS on a stable host log + quiet stream, FAIL on a counted *.updated
+  # event in the window, FAIL on a reload-relevant plugin write gained in the
+  # window, and the MCP-connect precondition is recorded (not gating) when the
+  # host log carries no connected line. The grace/wait knobs shrink for the
+  # self-test; the endpoints are real SSE streams.
+  local steadir
+  mkdir -p "$TMP/dtsteady"
+  steadir="$TMP/dtsteady"
+  EV_LIVE="$steadir"
+  OQA_PL_STEADY_WINDOW_SECS=2
+  OQA_PL_STEADY_WAIT_SECS=3
+  OQA_PL_STEADY_GRACE_TICKS=1
+  printf '%s\n' \
+    'timestamp=stub level=INFO message="mcp connected" server=lsp tools=9 role=server' \
+    > "$steadir/host.log"
+  steady_run() {
+    oqa_pl_steady_window_quiet "$1" "$steadir/host.log" "$2" "stub-pass" > "$TMP/steady-msg.out" 2>&1
+  }
+
+  # case 1: quiet stream -> PASS with the saved capture + digest.
+  printf 'seed\n' > "$steadir/plugin.log"
+  read -r ev_port ev_pid < <(start_sse "") || { oqa_st_fail "steady case 1: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
+  fails_before=$FAILS
+  steady_run "$steadir/plugin.log" "http://127.0.0.1:$ev_port/api/event"; rc=$?
+  out="$(cat "$TMP/steady-msg.out" 2>/dev/null || true)"
+  if [ "$rc" -eq 0 ] && [ $((FAILS - fails_before)) -eq 0 ] \
+    && printf '%s' "$out" | grep -qF 'zero *.updated events, zero reload writes' \
+    && printf '%s' "$out" | grep -qF 'registration steady' \
+    && [ -s "$steadir/steady-window.sse" ] \
+    && grep -qF 'verdict=PASS' "$steadir/steady-window.txt" \
+    && grep -qF 'events_in_window=0' "$steadir/steady-window.txt" \
+    && grep -qF 'plugin_reload_writes=0' "$steadir/steady-window.txt" \
+    && grep -qF 'mcp_connected_stable=1' "$steadir/steady-window.txt"; then
+    oqa_st_pass "driver: steady window PASSes on a quiet host with MCP connected and saves the capture + digest"
+  else
+    bad "driver: steady window failed on a quiet host (rc=$rc out=$out)"
+  fi
+  oqa_st_stop_sse_pid "$ev_pid"
+
+  # case 2: one counted event in the window -> FAIL, the digest names it.
+  read -r ev_port ev_pid < <(start_sse "provider.updated@0.4") || { oqa_st_fail "steady case 2: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
+  fails_before=$FAILS
+  steady_run "$steadir/plugin.log" "http://127.0.0.1:$ev_port/api/event"; rc=$?
+  out="$(cat "$TMP/steady-msg.out" 2>/dev/null || true)"
+  if [ "$rc" -ne 0 ] && [ $((FAILS - fails_before)) -eq 1 ] \
+    && printf '%s' "$out" | grep -qF 'events=1 reload writes=0' \
+    && printf '%s' "$out" | grep -qF 'registration reloaded after activation' \
+    && grep -qF 'verdict=FAIL' "$steadir/steady-window.txt" \
+    && grep -qF 'events_in_window=1' "$steadir/steady-window.txt" \
+    && grep -qF 'provider.updated' "$steadir/steady-window.txt" \
+    && [ -s "$steadir/steady-window.sse" ]; then
+    oqa_st_pass "driver: steady window FAILs truthfully on a post-activation event and the digest names it"
+  else
+    bad "driver: steady window event-case did not fail truthfully (rc=$rc out=$out)"
+  fi
+  oqa_st_stop_sse_pid "$ev_pid"
+
+  # case 3: a reload-relevant plugin write gained in the window -> FAIL.
+  read -r ev_port ev_pid < <(start_sse "") || { oqa_st_fail "steady case 3: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
+  printf 'seed\n' > "$steadir/plugin.log"
+  ( sleep 2.5; printf '[%s] [opencode-v2] agent-registration: replayed 17 agents: x\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$steadir/plugin.log" ) &
+  app_pid=$!
+  fails_before=$FAILS
+  steady_run "$steadir/plugin.log" "http://127.0.0.1:$ev_port/api/event"; rc=$?
+  out="$(cat "$TMP/steady-msg.out" 2>/dev/null || true)"
+  wait "$app_pid" 2>/dev/null || true
+  if [ "$rc" -ne 0 ] && [ $((FAILS - fails_before)) -eq 1 ] \
+    && printf '%s' "$out" | grep -qF 'events=0 reload writes=1' \
+    && grep -qF 'verdict=FAIL' "$steadir/steady-window.txt" \
+    && grep -qF 'plugin_reload_writes=1' "$steadir/steady-window.txt" \
+    && grep -qF 'agent-registration: replayed' "$steadir/steady-window.txt"; then
+    oqa_st_pass "driver: steady window FAILs truthfully on a gained reload write and the digest quotes the line"
+  else
+    bad "driver: steady window write-case did not fail truthfully (rc=$rc out=$out)"
+  fi
+  oqa_st_stop_sse_pid "$ev_pid"
+
+  # case 4: no mcp connected line at all -> the precondition is recorded as
+  # not reached, the verdict still rides events and writes only.
+  : > "$steadir/host.log"
+  printf 'seed\n' > "$steadir/plugin.log"
+  read -r ev_port ev_pid < <(start_sse "") || { oqa_st_fail "steady case 4: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
+  fails_before=$FAILS
+  steady_run "$steadir/plugin.log" "http://127.0.0.1:$ev_port/api/event"; rc=$?
+  out="$(cat "$TMP/steady-msg.out" 2>/dev/null || true)"
+  if [ "$rc" -eq 0 ] && [ $((FAILS - fails_before)) -eq 0 ] \
+    && grep -qF 'mcp_connected_stable=0' "$steadir/steady-window.txt" \
+    && grep -qF 'mcp-connect stability not reached' "$TMP/steady-msg.out" \
+    && grep -qF 'verdict=PASS' "$steadir/steady-window.txt"; then
+    oqa_st_pass "driver: steady window records an unreachable MCP precondition without gating the verdict"
+  else
+    bad "driver: steady window precondition-case did not behave (rc=$rc out=$out)"
+  fi
+  oqa_st_stop_sse_pid "$ev_pid"
+  rm -f "$SSE_PIDFILE"
+  unset OQA_PL_STEADY_WINDOW_SECS OQA_PL_STEADY_WAIT_SECS OQA_PL_STEADY_GRACE_TICKS EV_LIVE
+
+  # 6g-ter. V1 baseline recapture: with the switch the driver invokes the
+  # baseline capture (stubbed capture script, no V1 host needed) before the
+  # sandbox; without the switch it never runs; a failing capture fails fast
+  # with the capture log in the evidence dir.
+  local recdir stub marker
+  mkdir -p "$TMP/dtrecap"
+  recdir="$TMP/dtrecap"
+  stub="$recdir/fake-v1-baseline.sh"
+  marker="$recdir/capture-ran.marker"
+  printf '#!/usr/bin/env bash\ntouch "%s"\n' "$marker" > "$stub"
+  EV_LIVE="$recdir"
+  OQA_PL_V1_BASELINE_SCRIPT="$stub"
+  RECAPTURE_V1_BASELINE=0
+  if oqa_pl_recapture_v1_baseline && [ ! -f "$marker" ]; then
+    oqa_st_pass "driver: baseline recapture never runs without the switch"
+  else
+    bad "driver: baseline recapture ran without the switch or failed while off"
+    driver_fails=$((driver_fails + 1))
+  fi
+  RECAPTURE_V1_BASELINE=1
+  if oqa_pl_recapture_v1_baseline 2> "$recdir/driver-line.log" \
+     && [ -f "$marker" ] && grep -qF 'V1 host' "$recdir/driver-line.log"; then
+    oqa_st_pass "driver: baseline recapture runs with the switch and names the pinned host version"
+  else
+    bad "driver: baseline recapture did not run with the switch or missed the host version line"
+    driver_fails=$((driver_fails + 1))
+  fi
+  printf '#!/usr/bin/env bash\nprintf "boom: capture failed\\n" >&2\nexit 1\n' > "$stub"
+  rm -f "$marker"
+  fails_before=$FAILS
+  if oqa_pl_recapture_v1_baseline; then
+    bad "driver: baseline recapture passed despite a failing capture stub"
+    driver_fails=$((driver_fails + 1))
+  else
+    if [ $((FAILS - fails_before)) -eq 1 ] && grep -qF 'boom: capture failed' "$recdir/v1-baseline-recapture.out"; then
+      oqa_st_pass "driver: baseline recapture fails fast with the capture log on failure"
+    else
+      bad "driver: baseline recapture failure path was not truthful"
+      driver_fails=$((driver_fails + 1))
+    fi
+  fi
+  RECAPTURE_V1_BASELINE=0
+  unset OQA_PL_V1_BASELINE_SCRIPT
 
   FAILS=$((self_fails + driver_fails))
 }

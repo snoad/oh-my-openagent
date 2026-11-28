@@ -265,6 +265,33 @@ describe("registerToolHookAdapters", () => {
       expect(event.result?.content).toEqual([{ type: "text", text: "line 1\n1: line 1 LINE#QPZ" }])
     })
 
+    it("#given a read result carrying only the SDK output string (the wave-3 regression shape) #when the after hook runs #then the enhancer still tags and the content write-back carries the tag", async () => {
+      // given: the live 2.4.1 read result handed the after hook as { output }
+      // with no content array; the codec previously saw empty text and the
+      // write-back degraded the session context to an empty part (L-09)
+      const ctx = createFakeV2Context()
+      const calls: RecordedAfter[] = []
+      registerToolHookAdapters(
+        ctx,
+        recordingEngine(calls, (output) => {
+          output.output += "\n1#RS|parity row nine file\n2#VW|second line"
+        }),
+        marker().mark,
+      )
+      const event = afterCompletedEvent({
+        output: "Read file /tmp/p/parity-file.txt, lines 1-2\n1: parity row nine file\n2: second line",
+      })
+
+      // when
+      await ctx.__fire("tool", "execute.after", event)
+
+      // then: the enhancer saw the normalized body and the tag survives in the result
+      expect(calls[0]?.initialOutput).toBe("1: parity row nine file\n2: second line")
+      expect(event.result?.content).toEqual([
+        { type: "text", text: "1: parity row nine file\n2: second line\n1#RS|parity row nine file\n2#VW|second line" },
+      ])
+    })
+
     it("#given a result title #when mapping #then it wins over the tool name, and a handler-set title is written back", async () => {
       // given
       const ctx = createFakeV2Context()

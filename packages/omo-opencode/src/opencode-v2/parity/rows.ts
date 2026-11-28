@@ -12,6 +12,7 @@ import { hHookContextRows } from "./rows-h-hook-context"
 import { hHookPromptRows } from "./rows-h-hook-prompt"
 import { hHookRequestRows } from "./rows-h-hook-request"
 import { hHookToolRows } from "./rows-h-hook-tool"
+import { hHookToolDefinitionRows } from "./rows-h-hook-tool-definition"
 import { hHookCompactionRows, hOrchRows } from "./rows-h-orch"
 import { hMetaCiRows } from "./rows-h-meta-ci"
 import { hFakeRows } from "./rows-h-fake"
@@ -22,6 +23,7 @@ import { hClientMiscRows } from "./rows-h-client-misc"
 import { hDiRows } from "./rows-h-di"
 import { hLoadRows } from "./rows-h-load"
 import { hReloadRows } from "./rows-h-reload"
+import { hRegWaveRows } from "./rows-h-reg"
 import { liveRows } from "./rows-live"
 import { V2_LIMITS } from "./v2-limits"
 
@@ -174,6 +176,7 @@ export const PARITY_ROWS: ParityRow[] = [
   ...hHookContextRows,
   ...hHookPromptRows,
   ...hHookToolRows,
+  ...hHookToolDefinitionRows,
   ...hHookCompactionRows,
   ...hOrchRows,
   ...hClientRows,
@@ -183,6 +186,7 @@ export const PARITY_ROWS: ParityRow[] = [
   ...hGateRows,
   ...hDiRows,
   ...hReloadRows,
+  ...hRegWaveRows,
   ...liveRows,
   ...hMetaRows,
   ...hMetaCiRows,

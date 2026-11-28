@@ -46,10 +46,17 @@ export type LiveManifest = {
     readonly a?: LiveScenarioRun
     readonly b?: LiveScenarioRun
     readonly c?: LiveScenarioRun
+    // d carries the scripted plugin grep call (L-10); e carries the tool
+    // capture taken after the host config change (L-16).
+    readonly d?: LiveScenarioRun
+    readonly e?: LiveScenarioRun
   }
   readonly locations: readonly LiveLocation[]
   readonly tuiSmokeLog?: string
   readonly pluginFileLog?: string
+  // The sandbox omo.json the driver wrote; the tool checks read the
+  // disabled_tools entry out of it (L-04 tolerance, L-16 control pair).
+  readonly sandboxOmoConfig?: string
   readonly sandboxPath?: string
   readonly isolation?: LiveIsolationReceipt
   readonly scriptedSteps?: Readonly<Record<string, number>>

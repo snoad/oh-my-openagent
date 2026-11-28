@@ -23,6 +23,9 @@ export type V2HookContextEvent = {
   system: V2HookSystemPart[]
   messages: V2HookMessage[]
   options: Record<string, unknown>
+  // The 2.4.1 SessionContext tools map (name -> {description, input}); the
+  // task-27 request filter deletes hidden entries in place.
+  tools: Record<string, { description: string; input: unknown }>
 }
 
 const TOOL_RESULT_PART = "tool-result"

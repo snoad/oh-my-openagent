@@ -104,6 +104,12 @@ export async function loadSkillsFromDir(options: {
       }
     }
   } catch (error) {
+    // The probed directory itself is absent: skill roots are optional and a
+    // fresh install lacks every default one, so absence is not a load error
+    // (reporting it logged and toasted the same ENOENT once per engine boot).
+    if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
+      return []
+    }
     reportSkillLoadError(error, discovered, options.onDiagnostic)
   }
   return [...skillMap.values()]

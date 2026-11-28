@@ -52,9 +52,12 @@ jobs:
       - name: Bootstrap the pinned OpenCode 2 host
         run: bash .agents/skills/opencode-qa/scripts/v2-bootstrap.sh
 
+      - name: Install the pinned OpenCode 1 host for the baseline recapture
+        run: npm install -g "opencode-ai@$(bash -c 'source .agents/skills/opencode-qa/scripts/lib/v2-versions.sh; echo $V1_VERSION')"
+
       - name: Run the live parity driver (CI mode)
         run: |
-          bash .agents/skills/opencode-qa/scripts/v2-parity-live.sh --wave "$(bun -e 'console.log((await import("./packages/omo-opencode/src/opencode-v2/parity/lan.ts")).LANDED_WAVES)')" --ci --skip-v1 --no-build
+          bash .agents/skills/opencode-qa/scripts/v2-parity-live.sh --wave "$(bun -e 'console.log((await import("./packages/omo-opencode/src/opencode-v2/parity/lan.ts")).LANDED_WAVES)')" --ci --skip-v1 --no-build --recapture-v1-baseline
 
       - name: Upload parity evidence
         if: always()
@@ -72,6 +75,7 @@ jobs:
           JOB_SUMMARY_STATUS: ${{ job.status }}
           JOB_SUMMARY_DETAILS: |
             - Installs dependencies, builds the plugin, and bootstraps the pinned OpenCode 2 host.
+            - Installs the pinned OpenCode 1 host and recaptures the V1 agent baseline on the runner (`--recapture-v1-baseline`), so the agent-set comparison compares V1 and OpenCode 2 prompts captured on the same machine.
             - Runs the live parity driver in CI mode with `--skip-v1 --no-build` and uploads the evidence.
           JOB_SUMMARY_NEXT: Download the `opencode-v2-parity-evidence` artifact and read `results.json` plus the row evidence files.
         run: GITHUB_STEP_SUMMARY="$GITHUB_STEP_SUMMARY" bash .github/scripts/write-job-summary.sh

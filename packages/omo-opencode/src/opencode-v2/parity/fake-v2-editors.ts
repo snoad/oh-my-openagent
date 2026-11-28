@@ -21,6 +21,7 @@ export type FakeAgentInfo = {
   name: string
   mode: "subagent" | "primary" | "all"
   hidden: boolean
+  system?: string
   description?: string
   permissions?: ReadonlyArray<{ action: string; resource: string; effect: "allow" | "deny" | "ask" }>
   request?: Record<string, unknown>
@@ -122,6 +123,19 @@ export function createAgentDomain(input: {
     let defaultAgent: string | undefined
     return {
       ...keyed,
+      // The pinned 2.4.1 host inserts a missing id on update (the AgentEditor
+      // has no add; wave-0 interim L-03 evidence: "agent upsert on missing id
+      // creates oqa-probe-agent"). The fake mirrors that upsert.
+      update: (id: string, update: (agent: FakeAgentInfo) => void) => {
+        const existing = keyed.get(id)
+        if (existing !== undefined) {
+          update(existing)
+          return
+        }
+        const created: FakeAgentInfo = { id, name: id, mode: "subagent", hidden: false, permissions: [], request: {} }
+        keyed.add(created)
+        update(created)
+      },
       default: (id: string | undefined) => {
         defaultAgent = id
       },

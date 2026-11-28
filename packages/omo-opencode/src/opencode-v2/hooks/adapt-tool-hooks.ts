@@ -80,8 +80,13 @@ function recordArgsOf(input: unknown): Record<string, unknown> {
 }
 
 function codecInputOf(result: V2ToolHookResult): V2ToolResultInput {
-  const content =
+  const rawContent =
     typeof result.content === "string" ? [{ type: "text" as const, text: result.content }] : result.content
+  const content =
+    rawContent ??
+    (typeof result.output === "string" && result.output.length > 0
+      ? [{ type: "text" as const, text: result.output }]
+      : undefined)
   return {
     ...(result.title === undefined ? {} : { title: result.title }),
     ...(content === undefined ? {} : { content }),

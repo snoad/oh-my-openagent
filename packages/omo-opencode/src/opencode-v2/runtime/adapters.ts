@@ -3,12 +3,22 @@ import type { Event } from "@opencode-ai/sdk"
 import { v1EventSessionID } from "../events/v1-out-event"
 import { subscribeV2Events, type V2EventSubscriptionContext } from "../events/subscribe-v2-events"
 import { registerContextHookAdapter } from "../hooks/adapt-context-hook"
+import { requestToolFilterOf } from "../hooks/hidden-tools"
 import { registerRequestHookAdapters, type V2SessionHookContext } from "../hooks/adapt-request-hooks"
 import { registerModelResolveAdapter } from "../hooks/adapt-model-resolve"
 import { registerPromptHookAdapter } from "../hooks/adapt-prompt-hook"
 import { registerToolHookAdapters, type V2ToolHookContext } from "../hooks/adapt-tool-hooks"
 import { registerCompactionHookAdapters } from "../hooks/adapt-compaction-hooks"
 import { registerIdleContinuationAdapter } from "../hooks/adapt-idle-continuation"
+import { createPlanSource } from "../registration/plan-source"
+import type { PlanSourceContext } from "../registration/plan-source-context"
+import { v2ToolRegistrationAdapter } from "./adapt-tool-registration"
+import { v2TodoAdapter } from "./adapt-todo-registration"
+import { v2AgentRegistrationAdapter } from "./adapter-agent-registration"
+import { v2CommandRegistrationAdapter } from "./adapter-command-registration"
+import { v2McpRegistrationAdapter } from "./adapter-mcp-registration"
+import { v2PermissionRegistrationAdapter } from "./adapter-permission-registration"
+import { v2ProviderModelAdapterRegistration } from "./provider-model-adapter"
 import { markHook } from "./hook-markers"
 import type { V2Runtime } from "./stop-v2-runtime"
 import type { V2RuntimePluginContext } from "./start-v2-runtime"
@@ -62,10 +72,12 @@ const v2RequestHooksAdapterRegistration: V2AdapterRegistration = {
 // Plan task 17: one context hook registration routes the request payload
 // through the V1 system/messages/params transforms (GAP-4 request
 // transforms); the id-keyed write-back lives in hooks/context-message-*.
+// Task 27 adds the request-level tool filter that deletes the plan's hidden
+// V1 tool entries from the request before the transforms run.
 const v2ContextHookAdapterRegistration: V2AdapterRegistration = {
   id: "v2-context-hook",
   register: ({ ctx, runtime }) => {
-    registerContextHookAdapter({ ctx, runtime })
+    registerContextHookAdapter({ ctx, runtime, filterTools: requestToolFilterOf(() => runtime.planSource?.getPlan()) })
   },
 }
 
@@ -120,6 +132,28 @@ const v2IdleContinuationAdapterRegistration: V2AdapterRegistration = {
   },
 }
 
+// Plan task 23: the registration plan source recomputes the V1 config
+// pipeline into the registration plan (initial recompute awaited here) and
+// subscribes the config.updated / *.updated debounce. A pipeline failure
+// fails the plugin setup: the exact marker line plus the rejection, and no
+// partial plan is applied (reloads only follow a successful diff).
+const v2PlanSourceAdapterRegistration: V2AdapterRegistration = {
+  id: "v2-plan-source",
+  register: async ({ ctx, runtime }) => {
+    try {
+      const source = await createPlanSource(ctx as V2RuntimePluginContext & PlanSourceContext, runtime.engine, {
+        signal: runtime.abort.signal,
+        directory: ctx.location.directory,
+      })
+      runtime.planSource = source
+      runtime.subscriptions?.push(source.subscription)
+    } catch (error) {
+      console.warn("[opencode-v2] registration failed")
+      throw error
+    }
+  },
+}
+
 export const v2AdapterRegistrations: readonly V2AdapterRegistration[] = [
   v2EventAdapterRegistration,
   v2RequestHooksAdapterRegistration,
@@ -129,4 +163,12 @@ export const v2AdapterRegistrations: readonly V2AdapterRegistration[] = [
   v2ToolHooksAdapterRegistration,
   v2CompactionHooksAdapterRegistration,
   v2IdleContinuationAdapterRegistration,
+  v2PlanSourceAdapterRegistration,
+  v2ProviderModelAdapterRegistration,
+  v2TodoAdapter,
+  v2ToolRegistrationAdapter,
+  v2AgentRegistrationAdapter,
+  v2PermissionRegistrationAdapter,
+  v2McpRegistrationAdapter,
+  v2CommandRegistrationAdapter,
 ]

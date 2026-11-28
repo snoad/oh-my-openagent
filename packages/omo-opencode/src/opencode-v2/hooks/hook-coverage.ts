@@ -27,6 +27,13 @@ const REACHABLE_2 = (key: string): V2HookCoverageEntry => ({
   coverageWave: 2,
 })
 
+const REACHABLE_3 = (key: string, note: string): V2HookCoverageEntry => ({
+  key,
+  status: "reachable",
+  coverageWave: 3,
+  note,
+})
+
 const REACHABLE_4 = (key: string, note: string): V2HookCoverageEntry => ({
   key,
   status: "reachable",
@@ -64,6 +71,7 @@ const COVERAGE_LEDGER_KEYS: readonly V2HookCoverageEntry[] = [
     limitId: "LIM-18",
     note: "inert on OpenCode 2 because the host owns plugin updates",
   },
+  REACHABLE_3("config", "the V1 config pipeline runs through the task-23 registration plan source"),
   REACHABLE_4("bashFileReadGuard", "tool.execute.before surface, wave-4 suite"),
   REACHABLE_4("btwSideContextInjector", "messages.transform surface, wave-4 suite"),
   REACHABLE_4("commentChecker", "tool.execute surface, wave-4 suite"),
@@ -95,7 +103,10 @@ const COVERAGE_LEDGER_KEYS: readonly V2HookCoverageEntry[] = [
   REACHABLE_4("teamMailboxInjector", "config-gated team transform, wave-4 suite"),
   REACHABLE_4("teamModeStatusInjector", "config-gated team transform, wave-4 suite"),
   REACHABLE_4("teamToolGating", "team tool gate, wave-4 suite"),
-  REACHABLE_4("todoDescriptionOverride", "tool.definition surface, wave-4 suite"),
+  REACHABLE_3(
+    "todoDescriptionOverride",
+    "tool.definition surface: the task-25 snippet refresh calls it once per visible tool",
+  ),
   REACHABLE_4("toolOutputTruncator", "tool.execute.after surface, wave-4 suite"),
   REACHABLE_4("toolPairValidator", "messages.transform surface, wave-4 suite"),
   REACHABLE_4("ulwExecute", "chat.message surface, wave-4 suite"),

@@ -21,16 +21,29 @@
 #                      sorted by id, key order normalized (jq -S)
 #
 # Baseline environment notes (documented on purpose):
-#   - The sandbox has no provider keys, so model resolution drops the atlas
-#     agent entirely. The user-layer omo config ($HOME/.omo/omo.jsonc inside
-#     the sandbox, the ONLY config the plugin reads; the legacy
+#   - The sandbox presents the SAME model universe the live OpenCode 2 parity
+#     driver presents: default model openai/gpt-fake plus an openai provider
+#     block defining gpt-fake (baseURL points at a closed port; the capture
+#     only reads GET /agent and GET /experimental/tool, no model request is
+#     made). Byte equality between the V1 and V2 captures is only meaningful
+#     when both captures resolve the same model universe; with no model
+#     configured the V1 prompts embed the requirement-chain heads instead.
+#   - The user-layer omo config ($HOME/.omo/omo.jsonc inside the sandbox, the
+#     ONLY config the plugin reads; the legacy
 #     $XDG_CONFIG_HOME/opencode/oh-my-openagent.json is not read) pins
-#     agents.atlas.model so all 11 omo agents register.
+#     agents.atlas.model exactly like the live driver.
 #   - interactive_bash appears only when tmux is on PATH -> marked
 #     envDependent in tools.json.
 #   - V1 agent `permission` arrays embed absolute sandbox paths, so
 #     permission is excluded from the fixtures; prompts contain no sandbox
 #     paths (verified) but do embed machine workstation blocks.
+#
+# CI recapture note: those workstation blocks (omo-model-core ref, kernel,
+# CPU, Terminal) and the timezone make the fixtures an artifact of ONE
+# machine. The CI job therefore recaptures the baseline on the runner via
+# v2-parity-live.sh --recapture-v1-baseline (which calls this script before
+# its sandbox exists), so the L-03 byte comparison is V1 versus OpenCode 2
+# on the same machine. Local runs keep the committed fixtures.
 #
 # Usage:
 #   v2-v1-baseline.sh              # capture into the worktree fixtures dir
@@ -41,6 +54,8 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/common.sh"
+# The sandbox config is shared with v2-v1-regression.sh (see the lib header).
+. "$SCRIPT_DIR/lib/v2-v1-sandbox-config.sh"
 
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 FIXTURES_DIR="$REPO_ROOT/packages/omo-opencode/src/opencode-v2/parity/fixtures/v1-baseline"
@@ -104,10 +119,10 @@ oqa_v1b_capture() {
   real_db_before="$(oqa_v1b_real_db_receipt "$real_db")"
 
   oqa_mk_isolated_xdg || return 1
-  mkdir -p "$HOME/.omo"
-  printf '{"agents":{"atlas":{"model":"anthropic/claude-sonnet-5"}}}\n' > "$HOME/.omo/omo.jsonc"
-  mkdir -p "$XDG_CONFIG_HOME/opencode"
-  printf '{\n  "plugin": ["file://%s"]\n}\n' "$REPO_ROOT" > "$XDG_CONFIG_HOME/opencode/opencode.jsonc"
+  # The committed fixtures and the L-18 comparison must see the same config
+  # or the tool list drifts by construction: both scripts write through the
+  # shared lib (lib/v2-v1-sandbox-config.sh).
+  oqa_v1_write_sandbox_config "$REPO_ROOT"
 
   local neutral="$OQA_XDG_ROOT/neutral"
   mkdir -p "$neutral"

@@ -35,10 +35,16 @@ export const hMetaCiRows: ParityRow[] = defineGroup("H-META", [
       const ciBunVersion = trimmedLine(ciLines, "bun-version:")
       const ciRunner = trimmedLine(ciLines, "runs-on: ubuntu-")
       const pinSource = ".agents/skills/opencode-qa/scripts/lib/v2-versions.sh"
-      const pinnedVersion = (readRepoText(pinSource).match(/OC2_VERSION="([^"]+)"/) ?? [])[1] ?? ""
+      const pinText = readRepoText(pinSource)
+      const pinnedVersion = (pinText.match(/OC2_VERSION="([^"]+)"/) ?? [])[1] ?? ""
+      const v1PinnedVersion = (pinText.match(/V1_VERSION="([^"]+)"/) ?? [])[1] ?? ""
       expect(
         pinnedVersion !== "",
         `${pinSource}: no OC2_VERSION literal found (workflow under test: ${workflowPath})`,
+      ).toBe(true)
+      expect(
+        v1PinnedVersion !== "",
+        `${pinSource}: no V1_VERSION literal found (workflow under test: ${workflowPath})`,
       ).toBe(true)
       expect(
         workflow.includes("v2-bootstrap.sh"),
@@ -53,6 +59,10 @@ export const hMetaCiRows: ParityRow[] = defineGroup("H-META", [
         `${workflowPath}: must not inline the pinned host version '${pinnedVersion}'; the pin has exactly one source (${pinSource})`,
       ).toBe(false)
       expect(
+        workflow.includes(v1PinnedVersion),
+        `${workflowPath}: must not inline the pinned OpenCode 1 host version '${v1PinnedVersion}'; the pin has exactly one source (${pinSource})`,
+      ).toBe(false)
+      expect(
         workflowLines.includes(ciBunAction),
         `${workflowPath}: the oven-sh/setup-bun line must be byte-equal to ci.yml's first occurrence ('${ciBunAction}')`,
       ).toBe(true)
@@ -64,9 +74,24 @@ export const hMetaCiRows: ParityRow[] = defineGroup("H-META", [
         workflowLines.includes(ciRunner),
         `${workflowPath}: the runner label must equal ci.yml's Linux label ('${ciRunner}')`,
       ).toBe(true)
-      for (const clause of ["v2-parity-live.sh", "LANDED_WAVES", "--ci", "--skip-v1", "--no-build"]) {
+      for (const clause of [
+        "v2-parity-live.sh",
+        "LANDED_WAVES",
+        "--ci",
+        "--skip-v1",
+        "--no-build",
+        "--recapture-v1-baseline",
+      ]) {
         expect(workflow.includes(clause), `${workflowPath}: the run step must carry '${clause}'`).toBe(true)
       }
+      expect(
+        workflow.includes("lib/v2-versions.sh"),
+        `${workflowPath}: must source ${pinSource} when installing the OpenCode 1 host (no second copy of the V1 pin)`,
+      ).toBe(true)
+      expect(
+        workflow.includes("opencode-ai@"),
+        `${workflowPath}: must install the pinned OpenCode 1 host through npm ('opencode-ai@<V1_VERSION>' from ${pinSource})`,
+      ).toBe(true)
       expect(workflow.includes(".omo/evidence"), `${workflowPath}: the upload step must carry .omo/evidence`).toBe(true)
       expect(
         workflow.includes("retention-days: 14"),

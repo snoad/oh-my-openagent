@@ -43,6 +43,34 @@ const server = http.createServer((req, res) => {
     sendFile(res, path.join(cannedDir, "plugin.json"))
     return
   }
+  if (req.method === "GET" && req.url === "/api/mcp") {
+    sendFile(res, path.join(cannedDir, "mcp.json"))
+    return
+  }
+  if (req.method === "GET" && req.url === "/api/command") {
+    sendFile(res, path.join(cannedDir, "command.json"))
+    return
+  }
+  if (req.method === "POST" && /^\/api\/session\/[^/]+\/command$/.test(req.url ?? "")) {
+    // The stub models the real plugin behavior: the command's execute relay
+    // drives the prompt hook, whose interception marker lands in the plugin
+    // log (serve.out) exactly once per submission.
+    try {
+      fs.appendFileSync(path.join(cannedDir, "serve.out"), "[opencode-v2] hook command.execute.before fired\n")
+    } catch {
+      // the canned serve.out is optional
+    }
+    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: true }))
+    return
+  }
+  if (req.method === "POST" && req.url === "/api/session") {
+    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ data: { id: "ses_probe_l06" } }))
+    return
+  }
+  if (req.method === "GET" && req.url === "/api/agent") {
+    sendFile(res, path.join(cannedDir, "agents.json"))
+    return
+  }
   res.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ error: "stub: not found" }))
 })
 

@@ -9,7 +9,7 @@ import {
   runV2ReloadCycles,
 } from "../parity/fake-v2-engine"
 import { createFakeV2SideEffects } from "../parity/fake-v2-side-effects"
-import { startV2Runtime } from "./start-v2-runtime"
+import { startV2Runtime, type V2EngineHooks, type V2EngineModule } from "./start-v2-runtime"
 import {
   activeV2Runtimes,
   resetV2ProcessStateForTesting,
@@ -130,7 +130,7 @@ describe("startV2Runtime", () => {
     }
 
     // then
-    expect(runtime.subscriptions?.length).toBe(1)
+    expect(runtime.subscriptions?.length, "v2-events loop + task-23 plan-source raw listener").toBe(2)
     const stats = lines.filter((line) => line.startsWith("[opencode-v2] event stats "))
     expect(stats, "exactly one stats line at runtime stop").toHaveLength(1)
     const parsed = JSON.parse((stats[0] ?? "").slice("[opencode-v2] event stats ".length)) as Record<string, unknown>
@@ -217,6 +217,44 @@ describe("startV2Runtime", () => {
     } finally {
       captured.restore()
     }
+  })
+
+  test("#given a config handler whose recompute arms a reload debounce #when startV2Runtime resolves #then the debounce-fired recompute already ran (the active point is the fixed point)", async () => {
+    // given: the handler mirrors the real V1 pipeline plus the host fact that
+    // a mid-boot host config change (config.updated, the only subscribed
+    // event) arms a debounced recompute while the adapter chain still runs
+    const sideEffects = createFakeV2SideEffects()
+    const directory = "/tmp/w1-settle"
+    const ctx = fakeLocationContext(directory)
+    const calls: number[] = []
+    const engine: V2EngineModule = {
+      id: "race-engine",
+      server: async (): Promise<V2EngineHooks> => ({
+        config: async (config) => {
+          calls.push(calls.length + 1)
+          if (calls.length === 1) {
+            ctx.__pushEvent({ type: "config.updated", created: 1, data: {} })
+            // yield once so the raw event loop delivers the event and the
+            // plan source arms its debounce window mid-boot, exactly the
+            // host ordering the drain exists for
+            await new Promise<void>((resolve) => setTimeout(resolve, 0))
+          }
+          config.agent["omo-sentinel"] = { name: "omo-sentinel", prompt: "sentinel", mode: "primary" }
+        },
+      }),
+    }
+
+    // when
+    const runtime = await startV2Runtime(ctx, { engineFactory: () => engine, sideEffects })
+
+    // then: the runtime resolved only after the armed window fired and its
+    // recompute ran: five adapter-chain recomputes (the plan-source initial
+    // pass plus one awaited recompute per recompute-driving adapter) plus the
+    // one debounced recompute the mid-boot event armed; on the code without
+    // the drain the resolve happens while that window is still armed
+    expect(calls.length, "the debounced recompute ran before the runtime resolved").toBe(6)
+    expect(runtime.planSource?.getPlan()?.agents.added["omo-sentinel"]).toBeDefined()
+    await runtime.stop()
   })
 })
 

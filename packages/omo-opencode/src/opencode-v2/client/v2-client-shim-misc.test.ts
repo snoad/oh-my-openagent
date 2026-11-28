@@ -82,11 +82,14 @@ describe("v2 client shim misc methods", () => {
     expect(second.data).toEqual(first.data)
     expect(first.data.agent).toBeDefined()
     expect(first.data.tools).toBeDefined()
-    expect(first.data.permission).toEqual({})
+    expect(first.data.permission["bash"]).toBe("allow")
+    expect(Object.entries(first.data.permission ?? {})).toContainEqual(["task", "deny"])
+    expect(first.data.tools["bash"]).toBe(true)
+    expect(first.data.tools["task"]).toBe(false)
     expect(first.data.mcp).toEqual({})
     expect(first.data.command).toEqual({})
     const tools = first.data.tools ?? {}
-    expect(Object.values(tools).every((enabled) => enabled === true)).toBe(true)
+    expect(Object.keys(tools).length).toBeGreaterThan(0)
   })
 
   it("#given an unsupported method on a supported domain #when it is accessed #then a descriptive error naming it is thrown", () => {

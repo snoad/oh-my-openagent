@@ -17,6 +17,10 @@ type KeyedEditor = ReturnType<typeof createKeyedEditor<FakeSkillInfo>>
 
 export type FakeMcpServerConfig = Record<string, unknown>
 
+// The domain list answers the 2.4.1 McpServer shape (name + status), never the
+// editor config; the configs stay in the FakeMcpEditor map.
+export type FakeMcpListedServer = { name: string; status: string }
+
 export type FakeMcpEditor = {
   list(): Array<[string, FakeMcpServerConfig]>
   get(name: string): FakeMcpServerConfig | undefined
@@ -26,7 +30,7 @@ export type FakeMcpEditor = {
 }
 
 export interface FakeMcpDomain {
-  list(input?: { readonly location?: { readonly directory?: string } }): Promise<FakeListEnvelope<FakeMcpServerConfig>>
+  list(input?: { readonly location?: { readonly directory?: string } }): Promise<FakeListEnvelope<FakeMcpListedServer>>
   transform(callback: (editor: FakeMcpEditor) => void): Promise<FakeRegistration>
   reload(): Promise<void>
 }
