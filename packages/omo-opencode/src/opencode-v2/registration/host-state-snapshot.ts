@@ -12,6 +12,7 @@
 
 import { log } from "../../shared"
 
+import { jsonDeepEqual } from "./plan-diff"
 import { mapAgentToV1Config } from "./agent-mapping"
 import { mapCommandToV1, mapMcpListEntries, mapMcpServerConfig } from "./mcp-command-mapping"
 import { permissionRulesToV1 } from "./permission-rules"
@@ -36,6 +37,11 @@ export type HostStateSnapshot = {
   get(): Promise<V1ConfigProjection>
   refresh(): Promise<void>
   record(value: SnapshotRecordValue): void
+  // True when at least one record() since the last consume stored a value
+  // that deep-differs from that domain's previous record: the plan source's
+  // bounded continuation signal (the recorded base moved, so the next
+  // recompute must reconcile the plan against it).
+  consumeRecordChanges(): boolean
 }
 
 export type HostStateSnapshotOptions = {
@@ -48,6 +54,7 @@ type V1McpMap = V1ConfigProjection["mcp"]
 export function createHostStateSnapshot(ctx: SnapshotContext, options?: HostStateSnapshotOptions): HostStateSnapshot {
   const report = options?.log ?? log
   const recorded = new Map<SnapshotDomain, SnapshotRecordValue>()
+  const changedRecordDomains = new Set<SnapshotDomain>()
   const reportedUnmapped = new Set<string>()
   let cache: V1ConfigProjection | undefined
 
@@ -148,8 +155,19 @@ export function createHostStateSnapshot(ctx: SnapshotContext, options?: HostStat
       cache = await build()
     },
     record(value: SnapshotRecordValue) {
-      recorded.set(value.domain, structuredClone(value))
+      const next = structuredClone(value)
+      const previous = recorded.get(value.domain)
+      // A domain's FIRST record is not a change: the plan of that very
+      // recompute diffed the same pre-edit state through the fallback ctx
+      // read, so there is nothing to reconcile.
+      if (previous !== undefined && !jsonDeepEqual(previous, next)) changedRecordDomains.add(value.domain)
+      recorded.set(value.domain, next)
       cache = undefined
+    },
+    consumeRecordChanges() {
+      const changed = changedRecordDomains.size > 0
+      changedRecordDomains.clear()
+      return changed
     },
   }
 }

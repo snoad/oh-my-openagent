@@ -7,6 +7,7 @@ import { createFakeV2Context, type FakeV2Context } from "../parity/fake-v2-conte
 import { createAgentOverride, createToolOverride, type DomainHooks } from "../parity/plan-convergence-host-fake"
 import { createCommandOverride, createMcpOverride } from "../parity/plan-convergence-host-fake-domains"
 import { createProviderModelOverrides, seedHostModels } from "../parity/plan-convergence-host-fake-provider"
+import { buildProviderMirror } from "./provider-model-contributions"
 import { registerAgentTransform } from "./agents"
 import type { AgentReplayContext } from "./agent-replay-types"
 import { registerCommandTransform } from "./commands"
@@ -51,7 +52,11 @@ function convergenceEngine() {
       config.command["omo-cmd"] = { template: "hi $ARGUMENTS", description: "d" }
       config.mcp["probe"] = { type: "local", command: ["node", "-v"], enabled: true }
       config.tools["read"] = false
+      // The real pipeline's provider phase merges the base providers (the
+      // opengateway phase spreads existing config.provider), it never replaces
+      // them; the host-owned rows must therefore be visible in the plan.
       config.provider = {
+        ...config.provider,
         ogw: {
           name: "ogw",
           npm: "@ogw/sdk",
@@ -91,7 +96,14 @@ type MimicBoot = {
   readonly ctx: FakeV2Context
   readonly source: PlanSource
   readonly scheduler: ReturnType<typeof createManualScheduler>
-  readonly reloadCounts: () => { agent: number; tool: number; mcp: number; command: number }
+  readonly reloadCounts: () => {
+    agent: number
+    tool: number
+    mcp: number
+    command: number
+    provider: number
+    model: number
+  }
   readonly dispose: () => void
 }
 
@@ -107,6 +119,7 @@ async function bootMimicRegistration(): Promise<MimicBoot> {
     { name: "review", execute: async () => undefined },
   ])
   const providerModel = createProviderModelOverrides(seedHostModels())
+  const providerModelHooks = providerModel.hooks
   const ctx = {
     ...fake,
     agent: agent.domain,
@@ -148,6 +161,8 @@ async function bootMimicRegistration(): Promise<MimicBoot> {
       tool: tool.hooks.reloads.count,
       mcp: mcp.hooks.reloads.count,
       command: command.hooks.reloads.count,
+      provider: providerModelHooks.provider.reloads.count,
+      model: providerModelHooks.model.reloads.count,
     }),
     dispose: () => rmSync(skillDirectory, { recursive: true, force: true }),
   }
@@ -160,6 +175,17 @@ async function deliverReloadRound(boot: MimicBoot): Promise<void> {
   await flushAsync()
   await boot.scheduler.fire()
   await boot.source.idle()
+}
+
+// The manual scheduler's windows elapse only when fired, so the settle drain
+// is driven round by round until nothing stays armed; the cap mirrors the
+// source's own settleMaxRounds bound.
+async function drainToFixedPoint(boot: MimicBoot): Promise<void> {
+  for (let round = 0; round < 8 && boot.scheduler.pendingCount() > 0; round += 1) {
+    await boot.scheduler.fire()
+    await boot.source.idle()
+  }
+  await boot.source.settle()
 }
 
 describe("registration convergence over the host-mimicking context", () => {
@@ -183,6 +209,79 @@ describe("registration convergence over the host-mimicking context", () => {
       expect(boot.reloadCounts()).toEqual(settledCounts)
       expect(boot.source.getPlan()).toEqual(settledPlan)
       expect(boot.scheduler.pendingCount()).toBe(0)
+    } finally {
+      await boot.source.subscription.stop()
+      boot.dispose()
+    }
+  })
+})
+
+// The steady-host contract (the V1-faithful registration): after the startup
+// chain settles, host-internal loading changes the host's own registries but
+// must not reload any registration domain; only a real host config change
+// (config.updated) recomputes, and that recompute reloads exactly the domains
+// whose plan sections moved.
+describe("registration steady host over the host-mimicking context", () => {
+  it("#given the settled startup chain #when host-internal loading events land over grown host registries #then no reload fires and the plan is unchanged, while a foreign config change still recomputes and reloads the moved domains once", async () => {
+    // given
+    const boot = await bootMimicRegistration()
+    try {
+      for (let round = 0; round < 2; round += 1) await deliverReloadRound(boot)
+      const settledCounts = boot.reloadCounts()
+      const settledPlan = boot.source.getPlan()
+
+      // when: the host's own registries grow the way the live digests proved
+      // (built-in and MCP tools landing, a host agent registering late, a
+      // catalog provider row appearing) and their events deliver - none of
+      // them carries a config change
+      await boot.ctx.tool.transform((editor) => {
+        editor.add({
+          id: "late-host-tool",
+          description: "host-only late tool",
+          parameters: { type: "object", properties: {} },
+        })
+      })
+      await boot.ctx.agent.transform((editor) => {
+        editor.add({ id: "late-host-agent", name: "LateHost", mode: "subagent", hidden: false })
+      })
+      await boot.ctx.provider.transform((editor) => {
+        editor.add({ info: buildProviderMirror("late-catalog", { name: "Late Catalog" }), models: [] })
+      })
+      for (const type of ["agent.updated", "command.updated", "model.updated", "provider.updated"]) {
+        boot.ctx.__pushEvent({ type, created: 1, data: {} })
+      }
+      await flushAsync()
+      await drainToFixedPoint(boot)
+
+      // then: the steady host stays quiet - no reload fired, plan unchanged
+      expect(boot.reloadCounts()).toEqual(settledCounts)
+      expect(boot.source.getPlan()).toEqual(settledPlan)
+
+      // when: a real host config change lands (the foreign probe agent of the
+      // live driver's L-03 step); the runtime's own settle drain runs every
+      // round the change needs, including the recorded-base continuations
+      await boot.ctx.agent.transform((editor) => {
+        editor.add({ id: "config-probe-agent", name: "ConfigProbe", mode: "subagent", hidden: false })
+      })
+      boot.ctx.__pushEvent({ type: "config.updated", created: 2, data: {} })
+      await flushAsync()
+      await drainToFixedPoint(boot)
+
+      // then: exactly one recompute ran and reloaded exactly the domains the
+      // foreign change moved (agents gained the probe; tools and provider
+      // carried the host-internal growth the steady leg left unreconciled)
+      const after = boot.reloadCounts()
+      expect(after.agent).toBe(settledCounts.agent + 1)
+      expect(after.tool).toBe(settledCounts.tool + 1)
+      expect(after.provider).toBe(settledCounts.provider + 1)
+      expect(after.mcp).toBe(settledCounts.mcp)
+      expect(after.command).toBe(settledCounts.command)
+      const ids = (await boot.ctx.agent.list()).data.map((agent) => agent.id)
+      expect(ids).toContain("sentinel")
+      for (const foreign of ["late-host-agent", "config-probe-agent"]) {
+        expect(ids, `foreign agent ${foreign} survives the config-change recompute`).toContain(foreign)
+      }
+      expect(boot.source.getPlan()?.agents.added["Sentinel - worker"]).toBeDefined()
     } finally {
       await boot.source.subscription.stop()
       boot.dispose()

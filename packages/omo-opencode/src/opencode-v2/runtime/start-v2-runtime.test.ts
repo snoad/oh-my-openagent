@@ -221,7 +221,8 @@ describe("startV2Runtime", () => {
 
   test("#given a config handler whose recompute arms a reload debounce #when startV2Runtime resolves #then the debounce-fired recompute already ran (the active point is the fixed point)", async () => {
     // given: the handler mirrors the real V1 pipeline plus the host fact that
-    // a reload publishes *.updated, arming a debounced recompute mid-boot
+    // a mid-boot host config change (config.updated, the only subscribed
+    // event) arms a debounced recompute while the adapter chain still runs
     const sideEffects = createFakeV2SideEffects()
     const directory = "/tmp/w1-settle"
     const ctx = fakeLocationContext(directory)
@@ -232,7 +233,7 @@ describe("startV2Runtime", () => {
         config: async (config) => {
           calls.push(calls.length + 1)
           if (calls.length === 1) {
-            ctx.__pushEvent({ type: "agent.updated", created: 1, data: {} })
+            ctx.__pushEvent({ type: "config.updated", created: 1, data: {} })
             // yield once so the raw event loop delivers the event and the
             // plan source arms its debounce window mid-boot, exactly the
             // host ordering the drain exists for

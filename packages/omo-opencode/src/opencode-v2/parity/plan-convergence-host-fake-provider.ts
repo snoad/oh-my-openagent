@@ -91,12 +91,18 @@ export function createProviderModelOverrides(seed: ReadonlyArray<RegisteredModel
     readonly reload: () => Promise<void>
   }
   readonly model: Pick<FakeModelDomain, "transform" | "reload" | "list" | "default">
+  readonly hooks: {
+    readonly provider: DomainHooks<ProviderRecordEditor>
+    readonly model: DomainHooks<FakeModelEditor>
+  }
 } {
   const stores: ProviderStores = { records: new Map(), models: [...seed], defaultModel: undefined }
   const modelEditor: FakeModelEditor = createModelEditor(stores)
   const providerHooks: DomainHooks<ProviderRecordEditor> = { transforms: [], reloads: { count: 0 } }
   const modelHooks: DomainHooks<FakeModelEditor> = { transforms: [], reloads: { count: 0 } }
   return {
+    // Reload hook counters for the steady-host convergence test.
+    hooks: { provider: providerHooks, model: modelHooks },
     provider: {
       list: async () => ({
         location: { directory: DIRECTORY },

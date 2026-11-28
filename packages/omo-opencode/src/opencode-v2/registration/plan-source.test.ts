@@ -61,20 +61,14 @@ async function fireOneEvent(
 }
 
 describe("PLAN_SOURCE_EVENT_TYPES", () => {
-  it("#given the pinned host schema #when the subscription types are listed #then the five schema-confirmed updated events are subscribed", () => {
-    expect([...PLAN_SOURCE_EVENT_TYPES]).toEqual([
-      "config.updated",
-      "agent.updated",
-      "command.updated",
-      "model.updated",
-      "provider.updated",
-    ])
+  it("#given the pinned host schema #when the subscription types are listed #then only a host config change is subscribed", () => {
+    expect([...PLAN_SOURCE_EVENT_TYPES]).toEqual(["config.updated"])
     expect(DEFAULT_PLAN_DEBOUNCE_MS).toBe(500)
   })
 })
 
 describe("createPlanSource", () => {
-  it("#given a stub pipeline and an injected scheduler #when several events land inside one debounce window #then exactly one recompute runs, and an event after the window causes the next", async () => {
+  it("#given a stub pipeline and an injected scheduler #when several events land inside one debounce window #then exactly one recompute runs, a non-config event arms nothing and a later config event causes the next", async () => {
     // given
     const ctx = createFakeV2Context()
     const scheduler = createManualScheduler()
@@ -100,15 +94,22 @@ describe("createPlanSource", () => {
     await source.idle()
     expect(recomputeCount).toBe(1)
 
-    // when: an event after the window
+    // when: a host-internal event after the window
     await fireOneEvent(ctx, source, scheduler, "model.updated")
+
+    // then: nothing armed, nothing recomputed
+    expect(recomputeCount).toBe(1)
+    expect(scheduler.pendingCount()).toBe(0)
+
+    // when: a host config change after the window
+    await fireOneEvent(ctx, source, scheduler, "config.updated")
 
     // then
     expect(recomputeCount).toBe(2)
     await source.subscription.stop()
   })
 
-  it("#given a stub pipeline that registers one new agent #when the initial recompute lands #then only the changed domain reloads, and an unchanged recompute skips the reload", async () => {
+  it("#given a stub pipeline that registers one new agent #when the initial recompute lands #then only the changed domain reloads, and a registry echo event recomputes nothing", async () => {
     // given
     const ctx = createFakeV2Context()
     const scheduler = createManualScheduler()
@@ -117,15 +118,17 @@ describe("createPlanSource", () => {
     expect(callOps(ctx, "tool.reload")).toBe(0)
     expect(Object.keys(source.getPlan()?.agents.added ?? {})).toEqual(["omo-sentinel"])
 
-    // when: the same plan recomputes
+    // when: the reload's own echo event delivers (the host republishes the
+    // registration's mutations)
     await fireOneEvent(ctx, source, scheduler, "agent.updated")
 
-    // then
+    // then: no recompute armed, so no reload fired
     expect(callOps(ctx, "agent.reload")).toBe(1)
+    expect(scheduler.pendingCount()).toBe(0)
     await source.subscription.stop()
   })
 
-  it("#given the plugin's own registration recorded its pre-transform base #when the reload's own event retriggers the recompute #then the plan is unchanged, no second reload fires and the recorded base is not re-read", async () => {
+  it("#given the plugin's own registration recorded its pre-transform base #when the next config-change recompute lands #then the plan is unchanged, no second reload fires and the recorded base is not re-read", async () => {
     // given
     const ctx = createFakeV2Context()
     const scheduler = createManualScheduler()
@@ -138,11 +141,16 @@ describe("createPlanSource", () => {
       editor.add({ id: "omo-sentinel", name: "OmoSentinel", mode: "primary", hidden: false })
     })
 
-    // then: the reload-triggered recompute reads the recorded base, yields the same plan and never reloads
-    await fireOneEvent(ctx, source, scheduler, "agent.updated")
+    // then: the config-change recompute reads the recorded base, yields the
+    // same plan and never reloads; its record pass is stable, so no
+    // continuation follows it
+    await fireOneEvent(ctx, source, scheduler, "config.updated")
+    await scheduler.fire()
+    await source.idle()
     expect(callOps(ctx, "agent.reload")).toBe(1)
     expect(callOps(ctx, "agent.list")).toBe(1)
     expect(Object.keys(source.getPlan()?.agents.added ?? {})).toEqual(["omo-sentinel"])
+    expect(scheduler.pendingCount()).toBe(0)
     await source.subscription.stop()
   })
 
@@ -296,10 +304,10 @@ describe("createPlanSource", () => {
     })
     await source.recompute()
 
-    // and when: the reload chain publishes the domain event exactly as the
-    // real host's agent reload does, arming a debounce that outlives the
-    // adapter chain
-    ctx.__pushEvent({ type: "agent.updated", created: 1, data: {} })
+    // and when: a host config change lands exactly as the real driver's
+    // L-03 rewrite does while the adapter chain is still settling, arming a
+    // debounce that outlives the adapter chain
+    ctx.__pushEvent({ type: "config.updated", created: 1, data: {} })
     await flushAsync()
 
     // then: the old active point reports the plugin with the plan NOT yet
@@ -345,11 +353,11 @@ describe("createPlanSource", () => {
     const source = await createPlanSource(ctx, sentinelEngine(), { scheduler, settleMaxRounds: 2 })
 
     // when
-    ctx.__pushEvent({ type: "agent.updated", created: 1, data: {} })
+    ctx.__pushEvent({ type: "config.updated", created: 1, data: {} })
     await flushAsync()
     const draining = source.settle()
     for (let round = 0; round < 8; round += 1) {
-      ctx.__pushEvent({ type: "agent.updated", created: round, data: {} })
+      ctx.__pushEvent({ type: "config.updated", created: round, data: {} })
       await flushAsync()
     }
     await draining
