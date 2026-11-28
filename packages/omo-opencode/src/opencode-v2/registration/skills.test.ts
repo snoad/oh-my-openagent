@@ -1,9 +1,10 @@
 import { describe, expect, it } from "bun:test"
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { createFakeV2Context, type FakeV2Context } from "../parity/fake-v2-context"
+import { expectSameRealPath } from "../skill-path-assert.test-support"
 import { contributeDiscoveredSkills, isValidSkillInfo, type SkillContributionOptions } from "./skills"
 
 // Unit tests for the skill contribution (plan task 27): a discovered skill
@@ -38,9 +39,33 @@ describe("skill contribution", () => {
       const probe = listed.data.find((skill) => skill.id === "oqa-probe-skill")
       expect(probe, "the probe skill is contributed").toBeDefined()
       expect(probe?.content).toContain("probe body")
-      expect(probe?.path).toBe(skillDir)
+      expectSameRealPath(probe?.path, skillDir)
     } finally {
       rmSync(seededDir, { recursive: true, force: true })
+    }
+  })
+
+  it("#given a skill root reached through a symlink #when the skills contribute #then the contributed path equals the seeded path by its real path", async () => {
+    // given
+    const realDir = mkdtempSync(join(tmpdir(), "oqa-t27-skills-linked-"))
+    const seededDir = join(realDir, "link")
+    symlinkSync(realDir, seededDir, "dir")
+    const skillDir = join(seededDir, ".claude", "skills", "oqa-probe-skill")
+    mkdirSync(skillDir, { recursive: true })
+    writeFileSync(join(skillDir, "SKILL.md"), SKILL_BODY)
+    const ctx = createFakeV2Context()
+    try {
+      // when
+      await contribute(ctx, { skillDirectory: seededDir, onSkippedSkill: () => {} })
+
+      // then
+      const listed = await ctx.skill.list()
+      const probe = listed.data.find((skill) => skill.id === "oqa-probe-skill")
+      expect(probe, "the probe skill is contributed").toBeDefined()
+      expect(probe?.content).toContain("probe body")
+      expectSameRealPath(probe?.path, skillDir)
+    } finally {
+      rmSync(realDir, { recursive: true, force: true })
     }
   })
 

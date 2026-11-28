@@ -10,6 +10,7 @@ import { startV2Runtime } from "../runtime/start-v2-runtime"
 import { resetV2ProcessStateForTesting } from "../runtime/v2-runtime-deps"
 import { createPlanSource } from "../registration/plan-source"
 import { registerCommandTransform } from "../registration/commands"
+import { expectSameRealPath } from "../skill-path-assert.test-support"
 import { defineGroup, type ParityRow } from "./rows"
 
 // Wave-3 H-REG skill rows (plan task 27): the plugin-discovered skills the
@@ -47,7 +48,7 @@ async function checkSkillContribution(): Promise<void> {
     const probe = listed.data.find((skill) => skill.id === "oqa-probe-skill")
     expect(probe, "the probe skill is contributed").toBeDefined()
     expect(probe?.content).toContain("probe body")
-    expect(probe?.path).toBe(seeded.skillDir)
+    expectSameRealPath(probe?.path, seeded.skillDir)
   } finally {
     rmSync(seeded.dir, { recursive: true, force: true })
   }

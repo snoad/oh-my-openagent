@@ -11,6 +11,7 @@ import { createFakeV2SideEffects } from "../parity/fake-v2-side-effects"
 import { startV2Runtime, type V2Runtime, type V2RuntimeDeps } from "../runtime/start-v2-runtime"
 import { resetV2ProcessStateForTesting } from "../runtime/v2-runtime-deps"
 import { createPlanSource, type PlanSource } from "./plan-source"
+import { expectSameRealPath } from "../skill-path-assert.test-support"
 import { registerCommandTransform } from "./commands"
 import { validatePluginConfig } from "../../config/validate"
 import {
@@ -247,7 +248,7 @@ describe("command step over the real pipeline", () => {
       const probe = listed.data.find((skill) => skill.id === "oqa-probe-skill")
       expect(probe, "the probe skill is contributed").toBeDefined()
       expect(probe?.content).toContain("probe body")
-      expect(probe?.path).toBe(skillDir)
+      expectSameRealPath(probe?.path, skillDir)
       expect(listed.data.filter((skill) => skill.id === "oqa-probe-skill")).toHaveLength(1)
       await source.recompute()
       await source.idle()
