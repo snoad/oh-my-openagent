@@ -40,18 +40,33 @@ function fireAll<TEditor>(hooks: DomainHooks<TEditor>, editor: TEditor): void {
 
 // The live agent registry: an update on a missing id creates the item and
 // re-keys it to the display name it now carries (the host form that dodges
-// an id-only filter); lookup tolerates either form.
-function createAgentOverride(seed: ReadonlyArray<FakeAgentInfo>): {
+// an id-only filter); lookup tolerates either form. With volatileHostFields
+// the host agent's name alternates between its display and canonical forms
+// on every registry read - the real host's live-mutated vs rebuilt view
+// normalization, projection-invisible because the V1 mapping drops the name.
+function createAgentOverride(
+  seed: ReadonlyArray<FakeAgentInfo>,
+  options?: { readonly volatileHostFields?: boolean },
+): {
   readonly domain: FakeAgentDomain
   readonly hooks: DomainHooks<FakeAgentEditor>
 } {
   const items: FakeAgentInfo[] = seed.map((item) => ({ ...item }))
   const hooks: DomainHooks<FakeAgentEditor> = { transforms: [], reloads: { count: 0 } }
   let defaultAgent: string | undefined
+  let readFlip = false
+  const volatileName = (name: string): string => {
+    readFlip = !readFlip
+    return readFlip ? name : name.toLowerCase()
+  }
   const find = (id: string): FakeAgentInfo | undefined =>
     items.find((item) => item.id === id) ?? items.find((item) => item.name === id)
+  const listItems = (): FakeAgentInfo[] =>
+    options?.volatileHostFields === true
+      ? items.map((item) => ({ ...item, name: volatileName(String(item.name ?? item.id)) }))
+      : items
   const live: FakeAgentEditor = {
-    list: () => items,
+    list: listItems,
     get: (id) => find(id),
     add: (agent) => {
       if (find(agent.id) === undefined) items.push({ ...agent })
@@ -79,7 +94,7 @@ function createAgentOverride(seed: ReadonlyArray<FakeAgentInfo>): {
   }
   // The rebuilt view: items present their canonical id; writes land live.
   const rebuilt: FakeAgentEditor = {
-    list: () => items.map((item) => ({ ...item, id: canonicalAgentKey(item.id) })),
+    list: () => listItems().map((item) => ({ ...item, id: canonicalAgentKey(String(item.id)) })),
     get: (id) => {
       const item = find(id)
       return item === undefined ? undefined : { ...item, id: canonicalAgentKey(item.id) }
@@ -115,13 +130,29 @@ function createAgentOverride(seed: ReadonlyArray<FakeAgentInfo>): {
   return { domain, hooks }
 }
 
-function createToolOverride(seed: ReadonlyArray<FakeToolInfo>): {
+function createToolOverride(
+  seed: ReadonlyArray<FakeToolInfo>,
+  options?: { readonly volatileHostFields?: boolean },
+): {
   readonly domain: FakeToolDomain
   readonly hooks: DomainHooks<FakeToolEditor>
 } {
   const namespaces: Array<{ name: string; description?: string }> = []
+  const baseEditor = createKeyedEditor([...seed])
+  let toolFlip = false
   const editor: FakeToolEditor = {
-    ...createKeyedEditor([...seed]),
+    ...baseEditor,
+    // A host-own tool whose description alternates per registry read (the
+    // real host re-normalizes descriptions between its live and rebuilt
+    // registries); the plan's tools section carries ids only, so the plan
+    // stays byte-identical while the recorded tool base moves every read.
+    list: () =>
+      options?.volatileHostFields === true
+        ? baseEditor.list().map((item) => {
+            toolFlip = !toolFlip
+            return item.id === "read" ? { ...item, description: toolFlip ? "host read" : "host read (rescan)" } : item
+          })
+        : baseEditor.list(),
     namespace: (namespace: { name: string; description?: string }) => {
       namespaces.push(namespace)
     },

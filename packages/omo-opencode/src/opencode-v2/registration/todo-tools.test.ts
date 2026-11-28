@@ -11,9 +11,13 @@ import { TODOWRITE_DESCRIPTION } from "../../hooks/todo-description-override/des
 import { registerTodoTools, type TodoToolPlanSource } from "./todo-tools"
 import { writeSessionTodos } from "./todo-store"
 
-// A plan-source double that applies every registered step on recompute.
-function inlinePlanSource(): TodoToolPlanSource & { readonly recompute: () => Promise<void> } {
-  const steps: Array<{ run: () => void | Promise<void> }> = []
+// A plan-source double that applies every registered step on recompute and
+// exposes the steps so a test can drive a record-only pass (apply false).
+function inlinePlanSource(): TodoToolPlanSource & {
+  readonly recompute: () => Promise<void>
+  readonly steps: ReadonlyArray<{ run: (input: { readonly apply: boolean }) => void | Promise<void> }>
+} {
+  const steps: Array<{ run: (input: { readonly apply: boolean }) => void | Promise<void> }> = []
   const ownToolMarkers = new Map<string, string>()
   return {
     registerStep: (step) => {
@@ -23,8 +27,9 @@ function inlinePlanSource(): TodoToolPlanSource & { readonly recompute: () => Pr
       for (const [id, description] of entries) ownToolMarkers.set(id, description)
     },
     recompute: async () => {
-      for (const step of steps) await step.run()
+      for (const step of steps) await step.run({ apply: true })
     },
+    steps,
   }
 }
 
@@ -126,6 +131,35 @@ describe("registerTodoTools", () => {
     const after = (await ctx.tool.list()).map((tool) => tool.id)
     expect(after.filter((id) => id === "todowrite")).toHaveLength(1)
     expect(after.filter((id) => id === "todoread")).toHaveLength(1)
+  })
+
+  it("#given a settled recompute #when the todo step runs with apply false #then no tool transform is issued", async () => {
+    // given
+    const ctx = createFakeV2Context()
+    let transforms = 0
+    const inner = ctx.tool.transform.bind(ctx.tool)
+    const countingCtx: typeof ctx = {
+      ...ctx,
+      tool: {
+        ...ctx.tool,
+        transform: async (callback) => {
+          transforms += 1
+          return inner(callback)
+        },
+      },
+    }
+    const planSource = inlinePlanSource()
+    await registerTodoTools(countingCtx, planSource)
+    await planSource.recompute()
+    expect(transforms).toBe(1)
+    const step = planSource.steps[planSource.steps.length - 1]
+    expect(step).toBeDefined()
+
+    // when: a record-only pass (apply false)
+    await step.run({ apply: false })
+
+    // then: the step wrote nothing into the tool domain
+    expect(transforms).toBe(1)
   })
 })
 

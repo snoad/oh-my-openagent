@@ -11,6 +11,7 @@ import { buildProviderMirror } from "./provider-model-contributions"
 import { registerAgentTransform } from "./agents"
 import type { AgentReplayContext } from "./agent-replay-types"
 import { registerCommandTransform } from "./commands"
+import { MAX_RECORD_CONTINUATION_ROUNDS } from "./plan-source-continuation"
 import { registerMcpTransform } from "./mcp"
 import { createPlanSource, type PlanSource } from "./plan-source"
 import type { PlanSourceContext } from "./plan-source-context"
@@ -109,10 +110,14 @@ type MimicBoot = {
 
 // The real adapter sequence (runtime/adapters.ts order) over the mimic ctx:
 // plan source, provider-model, todo, tool, agent, permission, mcp, command.
-async function bootMimicRegistration(): Promise<MimicBoot> {
+// volatileHostFields models the real host's post-activation registry reads:
+// projection-invisible fields (agent name form, host tool description)
+// alternate on every read, so the recorded base deep-differs each pass while
+// the plan stays byte-identical.
+async function bootMimicRegistration(options?: { readonly volatileHostFields?: boolean }): Promise<MimicBoot> {
   const fake = createFakeV2Context()
-  const agent = createAgentOverride(HOST_SEED_AGENTS)
-  const tool = createToolOverride(HOST_SEED_TOOLS)
+  const agent = createAgentOverride(HOST_SEED_AGENTS, options)
+  const tool = createToolOverride(HOST_SEED_TOOLS, options)
   const mcp = createMcpOverride()
   const command = createCommandOverride([
     { name: "help", execute: async () => undefined },
@@ -290,6 +295,55 @@ describe("registration catalog-landing re-bake over the host-mimicking context",
         expect(ids, `foreign agent ${foreign} survives`).toContain(foreign)
       }
       expect(boot.source.getPlan()?.agents.added["Sentinel - worker"]).toBeDefined()
+    } finally {
+      await boot.source.subscription.stop()
+      boot.dispose()
+    }
+  })
+})
+
+// The moving-record contract (the 432dc9b7f0 real-host loop): after the
+// startup chain settles, the real OpenCode 2 host's registry reads alternate
+// projection-invisible fields (agent name form, host tool description) on
+// every pass with ZERO registry events, so a record pass deep-differs its
+// predecessor forever while the plan stays byte-identical. The record-change
+// continuation must therefore converge inside its hard bound: the
+// recomputes stop, no registration re-applies, and the plan never moves.
+describe("registration moving-record convergence over the host-mimicking context", () => {
+  it("#given the settled startup chain over a host whose reads alternate projection-invisible fields #when the post-init pass arms record-change continuations with zero events #then the recomputes stop inside the bound and no registration re-applies", async () => {
+    // given
+    const boot = await bootMimicRegistration({ volatileHostFields: true })
+    try {
+      await drainToFixedPoint(boot)
+      const settledCounts = boot.reloadCounts()
+      const settledPlan = boot.source.getPlan()
+      expect(settledPlan).toBeDefined()
+
+      // when: the post-init pass (startV2Runtime's restore) runs over the
+      // moving reads and no event ever delivers
+      boot.source.scheduleRecompute()
+      let rounds = 0
+      for (; rounds < MAX_RECORD_CONTINUATION_ROUNDS + 3; rounds += 1) {
+        if (boot.scheduler.pendingCount() === 0) break
+        await boot.scheduler.fire()
+        await boot.source.idle()
+      }
+
+      // then: the chain stopped inside the bound
+      expect(rounds).toBeGreaterThan(0)
+      expect(rounds).toBeLessThanOrEqual(MAX_RECORD_CONTINUATION_ROUNDS)
+      expect(boot.scheduler.pendingCount()).toBe(0)
+
+      // when: three further passes run over the still-moving reads
+      for (let round = 0; round < 3; round += 1) {
+        boot.source.scheduleRecompute()
+        await boot.scheduler.fire()
+        await boot.source.idle()
+        // then: nothing arms again and nothing re-applies
+        expect(boot.scheduler.pendingCount()).toBe(0)
+        expect(boot.reloadCounts()).toEqual(settledCounts)
+      }
+      expect(boot.source.getPlan()).toEqual(settledPlan)
     } finally {
       await boot.source.subscription.stop()
       boot.dispose()
