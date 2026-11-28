@@ -166,9 +166,10 @@ export function registerToolTransform(
             domain: "tool",
             value: pristineToolRecordsOf(editor.list().filter((item) => ownMarkers.get(item.id) !== item.description)),
           })
-          if (input.apply === true) {
-            for (const [name, v2] of v2Tools) applyToolToEditor(name, v2, editor)
-          }
+          // Always apply: the application is idempotent (add if absent,
+          // update if present) and the host's async tool-registry init may
+          // have wiped the plugin's tools after the startup chain.
+          for (const [name, v2] of v2Tools) applyToolToEditor(name, v2, editor)
           return editor
         }),
       )

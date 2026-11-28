@@ -38,6 +38,8 @@ export type PlanSource = {
   readonly addOwnToolMarkers: (entries: ReadonlyArray<readonly [string, string]>) => void
   readonly ownToolMarkers: ReadonlyMap<string, string>
   readonly recompute: () => Promise<void>
+  /** Arms one debounced recompute (the post-init tool-restore pass). */
+  readonly scheduleRecompute: () => void
   readonly settle: () => Promise<void>
   readonly idle: () => Promise<void>
   readonly subscription: V2EventSubscription
@@ -163,7 +165,6 @@ export async function createPlanSource(
       enqueueAndForget(recomputeNow)
     })
   }
-
   const armedOf = (): ArmedDebounce | undefined => armed
   const queueTailOf = (): Promise<void> => queueTail
   const settle = async (): Promise<void> => {
@@ -191,6 +192,7 @@ export async function createPlanSource(
       for (const domain of STEP_DOMAIN_RELOAD_TARGETS[step.domain]) pendingReloads.add(domain)
     },
     recompute: () => enqueue(recomputeNow),
+    scheduleRecompute,
     settle,
     idle: () => queueTail,
     subscription,
