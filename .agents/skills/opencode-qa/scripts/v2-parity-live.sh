@@ -302,113 +302,6 @@ oqa_pl_stop_evt() {
 
 # Drives one OC2 run and records the session id + SSE capture.
 # Args: <key> <title> <prompt> <proj-dir>; sets OQA_PL_SID
-# ---- scenario-model readiness gate (the PR #4 driver precondition) ----------
-# The omo model-core resolves every agent's model during the plugin's first
-# apply from $XDG_CACHE_HOME/oh-my-opencode caches; without them the
-# resolution falls back to the host's first-party model and the early
-# sessions never reach the fake server. This gate seeds those caches, then
-# runs THROWAWAY probe sessions against the fake server until one is actually
-# served by openai/gpt-fake (the fake's request recording is the observable),
-# bounded by OQA_PL_MODEL_WAIT_SECS (90) with each probe capped at
-# OQA_PL_PROBE_SECS (30). When the gate gives up the scenarios start anyway
-# and the model-dependent rows fail on their own evidence. The deadline is
-# sized to fit L-20's 60 s activation budget.
-oqa_pl_wait_scenario_model() {
-  local proj="$1" url="$2" pass="$3" cfg_file="${4:-}"
-  local model="${OQA_V2_SCENARIO_MODEL:-openai/gpt-fake}"
-  local deadline=$(( $(date +%s) + ${OQA_PL_MODEL_WAIT_SECS:-45} )) rc
-  local probe_steps="$WORK_DIR/scenario-probe.json" probe_out="$WORK_DIR/req-probe"
-  printf '%s\n' '{"steps":[{"text":"OQA_PROBE_FINAL ok"}]}' > "$probe_steps"
-  rm -rf "$probe_out"
-
-
-  # Phase 1: wait for the host's own default model to flip to the config
-  # model (the provider catalog has landed and the host re-resolved). Phase
-  # 2: one REAL config touch (a marker key, the L-03 rewrite's mechanism)
-  # fires config.updated, the plan source recomputes ONCE and re-bakes the
-  # agent items' models against the now-known provider state - the
-  # V1-faithful re-application path this fix implements. From then on every
-  # scenario session resolves the fake model through its agent item.
-  # The omo model-core reads the connected-providers and provider-models
-  # caches when it resolves the delegate categories and the agent models:
-  # seeding them with the sandbox's own model universe makes the task tool
-  # register and the agent models bake openai/gpt-fake deterministically
-  # instead of an empty-set fallback that disables the task tool and serves
-  # the early sessions on the first-party model.
-  local omo_cache_dir="${XDG_CACHE_HOME:-/tmp}/oh-my-opencode"
-  if [ -n "${XDG_CACHE_HOME:-}" ]; then
-    mkdir -p "$omo_cache_dir"
-    printf '%s\n' "{\"connected\": [\"openai\"], \"updatedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-      > "$omo_cache_dir/connected-providers.json"
-    printf '%s\n' "{\"models\": {\"openai\": [\"gpt-fake\"]}, \"connected\": [\"openai\"], \"updatedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-      > "$omo_cache_dir/provider-models.json"
-    oqa_pl_log "omo model caches seeded for the delegate categories and the agent-model bake"
-  fi
-
-  # The host's own models.json cache: the model-core ProviderCache reads it
-  # (XDG_CACHE_HOME/opencode/models.json) to resolve the task categories and
-  # the model-dependent tool toggles; with it missing (a fresh sandbox + a
-  # dead models.dev route) the pipeline writes task:false and patch:false
-  # into the plan's tools map and the request-level filter hides them. The
-  # file is the host's own format, copied verbatim from the real home.
-  local want_model="${model#*/}" flip_seen="" i resp
-  for i in $(seq 1 60); do
-    resp="$(curl -sf -m 3 -u "opencode:$pass" "$url/api/model/default" 2>/dev/null)" || resp=""
-    if printf '%s' "$resp" | grep -qF "\"$want_model\""; then
-      flip_seen=1
-      break
-    fi
-    kill -0 "$OQA_V2_SERVER_PID" 2>/dev/null || break
-    sleep 1
-  done
-  if [ -z "$flip_seen" ]; then
-    oqa_pl_log "host default model never became $model; skipping the config touch"
-  elif [ -n "$cfg_file" ] && [ -f "$cfg_file" ]; then
-    jq --argjson probe "$RANDOM" '. + {model_gate_probe: $probe}' "$cfg_file" > "$cfg_file.gate" 2>/dev/null \
-      && mv "$cfg_file.gate" "$cfg_file"
-    oqa_pl_log "host default model is $model; config touch fired for the agent-model re-bake"
-    for i in $(seq 1 20); do
-      resp="$(curl -sf -m 3 -u "opencode:$pass" "$url/api/agent" 2>/dev/null)" || resp=""
-      if printf '%s' "$resp" | jq -e --arg m "$model" '.data[] | select(.id == "sisyphus") | .model | select(. != null) | (.providerID + "/" + (.id // .modelID)) == $m' >/dev/null 2>&1; then
-        oqa_pl_log "sisyphus carries $model after the config touch"
-        break
-      fi
-      kill -0 "$OQA_V2_SERVER_PID" 2>/dev/null || break
-      sleep 1
-    done
-  fi
-
-  while [ "$(date +%s)" -lt "$deadline" ]; do
-    rm -f "$probe_out/requests.jsonl"
-    oqa_pl_start_fake "$probe_steps" "$probe_out" || return 1
-    # --agent sisyphus: the CLI's default agent is the host's built-in build
-    # agent (its model is the first-party big-pickle), so an unpinned probe
-    # would never exercise the scenario path. The plugin's prompt hook pins
-    # sisyphus for the scenarios; the probe matches that exactly.
-    ( cd "$proj" && OPENCODE_PASSWORD="$pass" timeout "${OQA_PL_PROBE_SECS:-30}" "$OC2" run \
-        "Reply with exactly: OQA_PROBE_FINAL ok" --agent sisyphus --title "v2 parity probe" \
-        --format json --server "$url" ) > /dev/null 2>&1
-    rc=$?
-    local want_record="${model#*/}"
-    if [ -s "$probe_out/requests.jsonl" ] && grep -qF '"model":"'"$want_record"'"' "$probe_out/requests.jsonl"; then
-      # The host's tool registry init is asynchronous: an early session's
-      # request can carry a partial tool set (the plugin's registry tools
-      # still merging). Require the full set on the probe's request before
-      # declaring readiness - each probe session advances the init.
-      local probe_tools
-      probe_tools="$(tail -1 "$probe_out/requests.jsonl" | jq -r '[.tools[]?.name] | length' 2>/dev/null)"
-      if [ "${probe_tools:-0}" -ge 24 ]; then
-        oqa_pl_log "probe session served by $model with $probe_tools tools; the scenario model is ready"
-        return 0
-      fi
-      oqa_pl_log "probe session served by $model with only $probe_tools tools (the host tool registry is still merging); probing again"
-    fi
-    oqa_pl_log "probe session not served by $model (rc=$rc); retrying until the deadline"
-  done
-  oqa_pl_log "no probe session was served by $model within the deadline; starting the scenarios anyway"
-  return 1
-}
-
 oqa_pl_run_once() {
   local key="$1" title="$2" prompt="$3" proj="$4"
   oqa_pl_stop_evt
@@ -836,12 +729,6 @@ oqa_pl_main() {
   # mcp_env_allowlist is user-layer only (security) and lives INSIDE the
   # "[opencode]" harness block: the unified omo schema drops unknown
   # top-level keys, so a top-level allowlist is silently ignored.
-  # Every omo agent whose V1 baseline prompt carries a model line is pinned
-  # to exactly the baseline's resolved model: the agent items' model fields
-  # are then deterministic from the FIRST apply (the unpinned resolution
-  # depends on the host's provider-catalog landing and falls back to the
-  # first-party model on a slow box, which both desyncs the prompt bytes from
-  # the baseline and serves the early sessions on the wrong model).
   printf '%s\n' '{ "agents": { "atlas": { "model": "anthropic/claude-sonnet-5" } }, "[opencode]": { "hashline_edit": true, "disabled_tools": ["look_at"], "mcp_env_allowlist": ["OQA_SECRET_TOKEN"] } }' > "$omo_cfg"
   oqa_pl_log "sandbox omo config written: $omo_cfg"
   local plugin_dir cfg_dir cfg_body

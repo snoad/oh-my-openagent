@@ -59,9 +59,28 @@ FAILS=0
 
 STUB_PID=""
 STUB_PORT=""
+SSE_PIDFILE=""
 TMP=""
 
+# Kills one backgrounded SSE stub by pid. The stub is started under a process
+# substitution, so it is not a child of this shell and wait cannot join it;
+# confirm death with a bounded kill -0 poll and escalate to -9.
+oqa_st_stop_sse_pid() {
+  local pid="$1" i
+  [ -n "$pid" ] || return 0
+  kill "$pid" 2>/dev/null || true
+  for i in $(seq 1 20); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.1
+  done
+  kill -9 "$pid" 2>/dev/null || true
+}
+
 cleanup() {
+  if [ -s "$SSE_PIDFILE" ]; then
+    oqa_st_stop_sse_pid "$(cat "$SSE_PIDFILE" 2>/dev/null || true)"
+    rm -f "$SSE_PIDFILE"
+  fi
   [ -n "$STUB_PID" ] && kill "$STUB_PID" 2>/dev/null || true
   if [ -z "${OQA_ST_KEEP:-}" ]; then
     [ -n "$TMP" ] && rm -rf "$TMP" || true
@@ -788,6 +807,9 @@ driver_tests() {
   idledir="$TMP/dtidle"
   EV_LIVE="$idledir"
   OQA_PL_IDLE_WINDOW_SECS=2
+  # The SSE stubs record their pid here; start_sse afterEach-kills the
+  # previous one and the EXIT trap kills the last one on any exit path.
+  SSE_PIDFILE="$TMP/sse.pid"
   # SSE stub: sends each "type@seconds" event of the comma schedule once,
   # then heartbeats every 100 ms keep the stream open (a non-streaming
   # response would end the window instantly).
@@ -808,7 +830,7 @@ driver_tests() {
         const hb = setInterval(() => res.write("data: {\"type\":\"heartbeat\"}\n\n"), 100);
         res.on("close", () => { timers.forEach(clearTimeout); clearInterval(hb); });
       });
-      srv.listen(port);
+      srv.listen(port, "127.0.0.1");
     ' "$1" "$2" &
   }
   wait_sse() {
@@ -825,10 +847,19 @@ driver_tests() {
   }
   start_sse() {
     local port pid
+    # afterEach for the previous case: kill the still-recorded stub before
+    # starting the next one (covers early returns from a failing case).
+    if [ -s "$SSE_PIDFILE" ]; then
+      oqa_st_stop_sse_pid "$(cat "$SSE_PIDFILE" 2>/dev/null || true)"
+      rm -f "$SSE_PIDFILE"
+    fi
     port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null || printf '41001')"
     sse_server "$port" "$1"
     pid=$!
-    wait_sse "$port" "$pid" || { kill "$pid" 2>/dev/null || true; return 1; }
+    # The pid lands in the file before the readiness wait so the EXIT trap can
+    # kill the stub even if this case fails mid-start.
+    printf '%s\n' "$pid" > "$SSE_PIDFILE"
+    wait_sse "$port" "$pid" || { oqa_st_stop_sse_pid "$pid"; rm -f "$SSE_PIDFILE"; return 1; }
     printf '%s %s\n' "$port" "$pid"
   }
   idle_run() {
@@ -854,6 +885,7 @@ driver_tests() {
   else
     bad "driver: idle window failed on a quiet host (rc=$rc out=$out)"
   fi
+  oqa_st_stop_sse_pid "$ev_pid"
 
   # case 2: events only in the first half (one absorbed late host change) -> PASS.
   read -r ev_port ev_pid < <(start_sse "provider.updated@0.2,model.updated@0.4") || { oqa_st_fail "idle case 2: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
@@ -871,8 +903,7 @@ driver_tests() {
   else
     bad "driver: idle window failed on a first-half-only event burst (rc=$rc out=$out)"
   fi
-  kill "$ev_pid" 2>/dev/null || true
-  wait "$ev_pid" 2>/dev/null || true
+  oqa_st_stop_sse_pid "$ev_pid"
 
   # case 3: one counted event in the last half -> FAIL with the digest naming it.
   read -r ev_port ev_pid < <(start_sse "command.updated@1.4") || { oqa_st_fail "idle case 3: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
@@ -891,8 +922,7 @@ driver_tests() {
   else
     bad "driver: idle window events-case did not fail truthfully (rc=$rc out=$out)"
   fi
-  kill "$ev_pid" 2>/dev/null || true
-  wait "$ev_pid" 2>/dev/null || true
+  oqa_st_stop_sse_pid "$ev_pid"
 
   # case 4: one reload-relevant plugin write in the last half -> FAIL and the
   # digest quotes the gained line.
@@ -914,8 +944,7 @@ driver_tests() {
   else
     bad "driver: idle window write-case did not fail truthfully (rc=$rc out=$out)"
   fi
-  kill "$ev_pid" 2>/dev/null || true
-  wait "$ev_pid" 2>/dev/null || true
+  oqa_st_stop_sse_pid "$ev_pid"
   unset OQA_PL_IDLE_WINDOW_SECS EV_LIVE
 
   # 6g-quater. registration steady window (the PR #4 post-activation pin):
@@ -956,8 +985,7 @@ driver_tests() {
   else
     bad "driver: steady window failed on a quiet host (rc=$rc out=$out)"
   fi
-  kill "$ev_pid" 2>/dev/null || true
-  wait "$ev_pid" 2>/dev/null || true
+  oqa_st_stop_sse_pid "$ev_pid"
 
   # case 2: one counted event in the window -> FAIL, the digest names it.
   read -r ev_port ev_pid < <(start_sse "provider.updated@0.4") || { oqa_st_fail "steady case 2: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
@@ -975,8 +1003,7 @@ driver_tests() {
   else
     bad "driver: steady window event-case did not fail truthfully (rc=$rc out=$out)"
   fi
-  kill "$ev_pid" 2>/dev/null || true
-  wait "$ev_pid" 2>/dev/null || true
+  oqa_st_stop_sse_pid "$ev_pid"
 
   # case 3: a reload-relevant plugin write gained in the window -> FAIL.
   read -r ev_port ev_pid < <(start_sse "") || { oqa_st_fail "steady case 3: stub did not start"; FAILS=$((FAILS + 1)); return 1; }
@@ -996,8 +1023,7 @@ driver_tests() {
   else
     bad "driver: steady window write-case did not fail truthfully (rc=$rc out=$out)"
   fi
-  kill "$ev_pid" 2>/dev/null || true
-  wait "$ev_pid" 2>/dev/null || true
+  oqa_st_stop_sse_pid "$ev_pid"
 
   # case 4: no mcp connected line at all -> the precondition is recorded as
   # not reached, the verdict still rides events and writes only.
@@ -1015,8 +1041,8 @@ driver_tests() {
   else
     bad "driver: steady window precondition-case did not behave (rc=$rc out=$out)"
   fi
-  kill "$ev_pid" 2>/dev/null || true
-  wait "$ev_pid" 2>/dev/null || true
+  oqa_st_stop_sse_pid "$ev_pid"
+  rm -f "$SSE_PIDFILE"
   unset OQA_PL_STEADY_WINDOW_SECS OQA_PL_STEADY_WAIT_SECS OQA_PL_STEADY_GRACE_TICKS EV_LIVE
 
   # 6g-ter. V1 baseline recapture: with the switch the driver invokes the
