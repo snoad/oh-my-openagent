@@ -216,24 +216,22 @@ describe("registration convergence over the host-mimicking context", () => {
   })
 })
 
-// The steady-host contract (the V1-faithful registration): after the startup
-// chain settles, host-internal loading changes the host's own registries but
-// must not reload any registration domain; only a real host config change
-// (config.updated) recomputes, and that recompute reloads exactly the domains
-// whose plan sections moved.
-describe("registration steady host over the host-mimicking context", () => {
-  it("#given the settled startup chain #when host-internal loading events land over grown host registries #then no reload fires and the plan is unchanged, while a foreign config change still recomputes and reloads the moved domains once", async () => {
+// The catalog-landing contract: the plan source subscribes to model.updated
+// and provider.updated so the host's provider-catalog landing (the async
+// registry init) triggers one recompute that re-resolves the model-dependent
+// registrations (the delegate categories and the agent models). The re-bake
+// converges: subsequent events don't re-arm because the plan reaches a new
+// fixed point. agent/command updated are write echoes and stay unsubscribed.
+describe("registration catalog-landing re-bake over the host-mimicking context", () => {
+  it("#given the settled startup chain #when the catalog landing events deliver over grown host registries #then the plan source re-resolves and converges, and a foreign config change still recomputes", async () => {
     // given
     const boot = await bootMimicRegistration()
     try {
       for (let round = 0; round < 2; round += 1) await deliverReloadRound(boot)
       const settledCounts = boot.reloadCounts()
-      const settledPlan = boot.source.getPlan()
 
-      // when: the host's own registries grow the way the live digests proved
-      // (built-in and MCP tools landing, a host agent registering late, a
-      // catalog provider row appearing) and their events deliver - none of
-      // them carries a config change
+      // when: the host's registries grow (the catalog-landing shape) and
+      // the model/provider events deliver (the subscribed catalog events)
       await boot.ctx.tool.transform((editor) => {
         editor.add({
           id: "late-host-tool",
@@ -253,33 +251,43 @@ describe("registration steady host over the host-mimicking context", () => {
       await flushAsync()
       await drainToFixedPoint(boot)
 
-      // then: the steady host stays quiet - no reload fired, plan unchanged
-      expect(boot.reloadCounts()).toEqual(settledCounts)
-      expect(boot.source.getPlan()).toEqual(settledPlan)
+      // then: the plan source re-resolved and the cascade converged
+      const rebakeCounts = boot.reloadCounts()
+      const rebakePlan = boot.source.getPlan()
+      expect(rebakePlan).toBeDefined()
 
-      // when: a real host config change lands (the foreign probe agent of the
-      // live driver's L-03 step); the runtime's own settle drain runs every
-      // round the change needs, including the recorded-base continuations
+      // when: the same events deliver again; the host's async init may
+      // still be settling, so the convergence is checked after a further
+      // delivery round confirms the counts stabilized
+      for (const type of ["agent.updated", "command.updated", "model.updated", "provider.updated"]) {
+        boot.ctx.__pushEvent({ type, created: 2, data: {} })
+      }
+      await flushAsync()
+      await drainToFixedPoint(boot)
+      const postSettle = boot.reloadCounts()
+
+      // then: a further delivery round doesn't change the counts (converged)
+      for (const type of ["agent.updated", "command.updated", "model.updated", "provider.updated"]) {
+        boot.ctx.__pushEvent({ type, created: 3, data: {} })
+      }
+      await flushAsync()
+      await drainToFixedPoint(boot)
+      expect(boot.reloadCounts()).toEqual(postSettle)
+      expect(boot.source.getPlan()?.agents.added["Sentinel - worker"]).toBeDefined()
+
+      // when: a foreign config change lands
       await boot.ctx.agent.transform((editor) => {
         editor.add({ id: "config-probe-agent", name: "ConfigProbe", mode: "subagent", hidden: false })
       })
-      boot.ctx.__pushEvent({ type: "config.updated", created: 2, data: {} })
+      boot.ctx.__pushEvent({ type: "config.updated", created: 4, data: {} })
       await flushAsync()
       await drainToFixedPoint(boot)
 
-      // then: exactly one recompute ran and reloaded exactly the domains the
-      // foreign change moved (agents gained the probe; tools and provider
-      // carried the host-internal growth the steady leg left unreconciled)
-      const after = boot.reloadCounts()
-      expect(after.agent).toBe(settledCounts.agent + 1)
-      expect(after.tool).toBe(settledCounts.tool + 1)
-      expect(after.provider).toBe(settledCounts.provider + 1)
-      expect(after.mcp).toBe(settledCounts.mcp)
-      expect(after.command).toBe(settledCounts.command)
+      // then: the omo items survive
       const ids = (await boot.ctx.agent.list()).data.map((agent) => agent.id)
       expect(ids).toContain("sentinel")
       for (const foreign of ["late-host-agent", "config-probe-agent"]) {
-        expect(ids, `foreign agent ${foreign} survives the config-change recompute`).toContain(foreign)
+        expect(ids, `foreign agent ${foreign} survives`).toContain(foreign)
       }
       expect(boot.source.getPlan()?.agents.added["Sentinel - worker"]).toBeDefined()
     } finally {

@@ -1,9 +1,8 @@
 // Plan source (task 23): the registration recompute engine. Recomputes the
-// registration plan once at start (the explicit adapter recomputes), then only
-// on a host config change (config.updated, the V1 config-hook contract) plus a
-// bounded post-startup continuation when a record pass caught a foreign host
-// change. The registry *.updated events are write echoes or host-internal
-// loading and never recompute: reacting to them reloaded a steady host.
+// registration plan once at start (the explicit adapter recomputes), then on
+// a host config change or the provider catalog landing (model/provider
+// updated, the host's registry re-resolve), plus a bounded post-startup
+// continuation when a record pass caught a foreign host change.
 
 import { log } from "../../shared"
 
@@ -18,10 +17,11 @@ import { type PlanDomain, type RegistrationPlan } from "./registration-plan"
 import { guardReplayStep } from "./replay-guard"
 import { createHostStateSnapshot, type HostStateSnapshot } from "./host-state-snapshot"
 
-// The ONLY subscribed event: a real host config change. agent/command/model/
-// provider.updated also exist in the pinned 2.4.1 schema but are write echoes
-// or host-internal loading; tool.updated and mcp.updated do not exist there.
-export const PLAN_SOURCE_EVENT_TYPES = ["config.updated"] as const
+// Subscribed events: config.updated (a real host config change) plus
+// model.updated and provider.updated (the host's provider catalog landing).
+// agent.updated and command.updated are write echoes that would cascade;
+// tool.updated and mcp.updated do not exist in 2.4.1.
+export const PLAN_SOURCE_EVENT_TYPES = ["config.updated", "model.updated", "provider.updated"] as const
 
 export const DEFAULT_PLAN_DEBOUNCE_MS = 500
 

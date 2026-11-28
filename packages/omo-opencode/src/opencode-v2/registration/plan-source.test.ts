@@ -61,8 +61,8 @@ async function fireOneEvent(
 }
 
 describe("PLAN_SOURCE_EVENT_TYPES", () => {
-  it("#given the pinned host schema #when the subscription types are listed #then only a host config change is subscribed", () => {
-    expect([...PLAN_SOURCE_EVENT_TYPES]).toEqual(["config.updated"])
+  it("#given the pinned host schema #when the subscription types are listed #then the config change and the catalog-landing events are subscribed", () => {
+    expect([...PLAN_SOURCE_EVENT_TYPES]).toEqual(["config.updated", "model.updated", "provider.updated"])
     expect(DEFAULT_PLAN_DEBOUNCE_MS).toBe(500)
   })
 })
@@ -94,8 +94,8 @@ describe("createPlanSource", () => {
     await source.idle()
     expect(recomputeCount).toBe(1)
 
-    // when: a host-internal event after the window
-    await fireOneEvent(ctx, source, scheduler, "model.updated")
+    // when: a write echo after the window (agent.updated is not subscribed)
+    await fireOneEvent(ctx, source, scheduler, "agent.updated")
 
     // then: nothing armed, nothing recomputed
     expect(recomputeCount).toBe(1)
