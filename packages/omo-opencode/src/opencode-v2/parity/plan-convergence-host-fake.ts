@@ -132,7 +132,7 @@ function createAgentOverride(
 
 function createToolOverride(
   seed: ReadonlyArray<FakeToolInfo>,
-  options?: { readonly volatileHostFields?: boolean },
+  options?: { readonly volatileHostFields?: boolean; readonly volatileHostIds?: boolean },
 ): {
   readonly domain: FakeToolDomain
   readonly hooks: DomainHooks<FakeToolEditor>
@@ -140,19 +140,34 @@ function createToolOverride(
   const namespaces: Array<{ name: string; description?: string }> = []
   const baseEditor = createKeyedEditor([...seed])
   let toolFlip = false
+  let idSeq = 0
   const editor: FakeToolEditor = {
     ...baseEditor,
     // A host-own tool whose description alternates per registry read (the
     // real host re-normalizes descriptions between its live and rebuilt
     // registries); the plan's tools section carries ids only, so the plan
     // stays byte-identical while the recorded tool base moves every read.
-    list: () =>
-      options?.volatileHostFields === true
-        ? baseEditor.list().map((item) => {
-            toolFlip = !toolFlip
-            return item.id === "read" ? { ...item, description: toolFlip ? "host read" : "host read (rescan)" } : item
-          })
-        : baseEditor.list(),
+    // volatileHostIds instead alternates a host tool's ID, which the
+    // projection keeps: the recorded base moves every read and so does the
+    // plan - the pathological-host shape the reconciliation bound exists for.
+    list: () => {
+      const items = baseEditor.list().map((item) => {
+        if (options?.volatileHostFields === true && item.id === "read") {
+          toolFlip = !toolFlip
+          return { ...item, description: toolFlip ? "host read" : "host read (rescan)" }
+        }
+        return item
+      })
+      if (options?.volatileHostIds !== true) return items
+      // A monotonic id: every registry read presents a host tool the base
+      // has never seen, so the projected base moves on every pass even when
+      // a domain reload re-fires the transform between reads.
+      return items.map((item) => {
+        if (item.id !== "read") return item
+        idSeq += 1
+        return { ...item, id: `host-rescan-${String(idSeq)}` }
+      })
+    },
     namespace: (namespace: { name: string; description?: string }) => {
       namespaces.push(namespace)
     },

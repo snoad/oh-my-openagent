@@ -1,25 +1,18 @@
 import { describe, expect, it } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { createFakeV2Context, type FakeV2Context } from "../parity/fake-v2-context"
-import { createAgentOverride, createToolOverride, type DomainHooks } from "../parity/plan-convergence-host-fake"
-import { createCommandOverride, createMcpOverride } from "../parity/plan-convergence-host-fake-domains"
-import { createProviderModelOverrides, seedHostModels } from "../parity/plan-convergence-host-fake-provider"
+import {
+  bootMimicRegistration,
+  deliverReloadRound,
+  drainToFixedPoint,
+  flushAsync,
+  type MimicBoot,
+} from "./plan-convergence-boot"
 import { buildProviderMirror } from "./provider-model-contributions"
-import { registerAgentTransform } from "./agents"
-import type { AgentReplayContext } from "./agent-replay-types"
-import { registerCommandTransform } from "./commands"
-import { MAX_RECORD_CONTINUATION_ROUNDS } from "./plan-source-continuation"
-import { registerMcpTransform } from "./mcp"
-import { createPlanSource, type PlanSource } from "./plan-source"
-import type { PlanSourceContext } from "./plan-source-context"
-import { permissionStep } from "./permissions"
-import { registerProviderModelTransforms } from "./provider-model"
-import { registerTodoTools } from "./todo-tools"
-import { registerToolTransform, type ToolRegistrationContext, type ToolRegistrationEngine } from "./tools"
-import type { V1WorkingConfig } from "./v1-config-projection"
+import { MAX_RECONCILE_CONTINUATION_ROUNDS } from "./plan-source-continuation"
+import { _flushForTesting, _resetLoggerForTesting, _setLoggerForTesting } from "../../shared/logger"
 
 // The convergence contract on a host-mimicking context (the wave-3 reload
 // loop): after the startup chain applies, delivering the reload events the
@@ -27,171 +20,6 @@ import type { V1WorkingConfig } from "./v1-config-projection"
 // transform registration the live editor (containing this runtime's previous
 // output, under the display-key ids the real host persists) and every reload
 // the rebuilt view (canonical ids), the two forms the live capture proved.
-
-const HOST_SEED_AGENTS = [
-  { id: "build", name: "Build", mode: "primary" as const, hidden: false },
-  { id: "general", name: "General", mode: "primary" as const, hidden: false },
-  { id: "explore", name: "Explore", mode: "subagent" as const, hidden: false },
-]
-
-const HOST_SEED_TOOLS = [{ id: "read" }, { id: "write" }, { id: "shell" }, { id: "question" }]
-
-// The stub pipeline mirrors the real V1 handler's shape: one plugin agent
-// under a display key that differs from its canonical id, one command, one
-// mcp server, one tool toggle and one contributed provider.
-function convergenceEngine() {
-  const stubExecute = async () => ({ content: "ok" })
-  const stubTool = {
-    description: "stub grep",
-    args: { pattern: { _zod: { def: { type: "string" }, toJSONSchema: () => ({ type: "string" }) } } },
-    execute: stubExecute,
-  }
-  return {
-    tool: { "omo-grep": stubTool } as unknown as ToolRegistrationEngine["tool"],
-    config: async (config: V1WorkingConfig) => {
-      config.agent["Sentinel - worker"] = { name: "Sentinel - worker", prompt: "p", mode: "primary" }
-      config.command["omo-cmd"] = { template: "hi $ARGUMENTS", description: "d" }
-      config.mcp["probe"] = { type: "local", command: ["node", "-v"], enabled: true }
-      config.tools["read"] = false
-      // The real pipeline's provider phase merges the base providers (the
-      // opengateway phase spreads existing config.provider), it never replaces
-      // them; the host-owned rows must therefore be visible in the plan.
-      config.provider = {
-        ...config.provider,
-        ogw: {
-          name: "ogw",
-          npm: "@ogw/sdk",
-          options: {},
-          models: { m1: { name: "M1", limit: { context: 10, output: 5 } } },
-        },
-      }
-    },
-  }
-}
-
-function createManualScheduler() {
-  const pending = new Set<{ run: () => void }>()
-  return {
-    setTimeout: (callback: () => void, ms: number) => {
-      const timer = { run: callback }
-      pending.add(timer)
-      void ms
-      return () => {
-        pending.delete(timer)
-      }
-    },
-    fire: async () => {
-      const timers = [...pending]
-      pending.clear()
-      for (const timer of timers) timer.run()
-    },
-    pendingCount: () => pending.size,
-  }
-}
-
-async function flushAsync(): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, 0))
-}
-
-type MimicBoot = {
-  readonly ctx: FakeV2Context
-  readonly source: PlanSource
-  readonly scheduler: ReturnType<typeof createManualScheduler>
-  readonly reloadCounts: () => {
-    agent: number
-    tool: number
-    mcp: number
-    command: number
-    provider: number
-    model: number
-  }
-  readonly dispose: () => void
-}
-
-// The real adapter sequence (runtime/adapters.ts order) over the mimic ctx:
-// plan source, provider-model, todo, tool, agent, permission, mcp, command.
-// volatileHostFields models the real host's post-activation registry reads:
-// projection-invisible fields (agent name form, host tool description)
-// alternate on every read, so the recorded base deep-differs each pass while
-// the plan stays byte-identical.
-async function bootMimicRegistration(options?: { readonly volatileHostFields?: boolean }): Promise<MimicBoot> {
-  const fake = createFakeV2Context()
-  const agent = createAgentOverride(HOST_SEED_AGENTS, options)
-  const tool = createToolOverride(HOST_SEED_TOOLS, options)
-  const mcp = createMcpOverride()
-  const command = createCommandOverride([
-    { name: "help", execute: async () => undefined },
-    { name: "review", execute: async () => undefined },
-  ])
-  const providerModel = createProviderModelOverrides(seedHostModels())
-  const providerModelHooks = providerModel.hooks
-  const ctx = {
-    ...fake,
-    agent: agent.domain,
-    tool: tool.domain,
-    mcp: mcp.domain,
-    command: command.domain,
-    provider: providerModel.provider,
-    model: providerModel.model,
-  } as FakeV2Context
-  const scheduler = createManualScheduler()
-  const engine = convergenceEngine()
-  const source = await createPlanSource(ctx as FakeV2Context & PlanSourceContext, engine, { scheduler })
-  const skillDirectory = mkdtempSync(join(tmpdir(), "oqa-conv-skills-"))
-  const [providerStep, modelStep] = await registerProviderModelTransforms(ctx, source.getPlan, source.snapshot)
-  source.registerStep(providerStep)
-  source.registerStep(modelStep)
-  registerTodoTools(ctx, source)
-  await registerToolTransform(
-    { planSource: source, tool: ctx.tool } as FakeV2Context & ToolRegistrationContext,
-    engine,
-    source.snapshot,
-  )
-  const agentStep = registerAgentTransform(ctx as FakeV2Context & AgentReplayContext, source.getPlan, source.snapshot)
-  source.registerStep(agentStep)
-  await source.recompute()
-  source.registerStep(permissionStep())
-  const mcpStep = registerMcpTransform(ctx, source.getPlan, source.snapshot)
-  source.registerStep(mcpStep)
-  await source.recompute()
-  const commandStep = registerCommandTransform(ctx, source.getPlan, source.snapshot, { skillDirectory })
-  source.registerStep(commandStep)
-  await source.recompute()
-  return {
-    ctx,
-    source,
-    scheduler,
-    reloadCounts: () => ({
-      agent: agent.hooks.reloads.count,
-      tool: tool.hooks.reloads.count,
-      mcp: mcp.hooks.reloads.count,
-      command: command.hooks.reloads.count,
-      provider: providerModelHooks.provider.reloads.count,
-      model: providerModelHooks.model.reloads.count,
-    }),
-    dispose: () => rmSync(skillDirectory, { recursive: true, force: true }),
-  }
-}
-
-async function deliverReloadRound(boot: MimicBoot): Promise<void> {
-  for (const type of ["agent.updated", "command.updated", "model.updated", "provider.updated"]) {
-    boot.ctx.__pushEvent({ type, created: 1, data: {} })
-  }
-  await flushAsync()
-  await boot.scheduler.fire()
-  await boot.source.idle()
-}
-
-// The manual scheduler's windows elapse only when fired, so the settle drain
-// is driven round by round until nothing stays armed; the cap mirrors the
-// source's own settleMaxRounds bound.
-async function drainToFixedPoint(boot: MimicBoot): Promise<void> {
-  for (let round = 0; round < 8 && boot.scheduler.pendingCount() > 0; round += 1) {
-    await boot.scheduler.fire()
-    await boot.source.idle()
-  }
-  await boot.source.settle()
-}
 
 describe("registration convergence over the host-mimicking context", () => {
   it("#given the real adapter sequence over a mimic that hands back the plugin's own output #when the reload events are delivered #then the reloads stop at a fixed point and the plan stays stable", async () => {
@@ -302,17 +130,50 @@ describe("registration catalog-landing re-bake over the host-mimicking context",
   })
 })
 
-// The moving-record contract (the 432dc9b7f0 real-host loop): after the
-// startup chain settles, the real OpenCode 2 host's registry reads alternate
-// projection-invisible fields (agent name form, host tool description) on
-// every pass with ZERO registry events, so a record pass deep-differs its
-// predecessor forever while the plan stays byte-identical. The record-change
-// continuation must therefore converge inside its hard bound: the
-// recomputes stop, no registration re-applies, and the plan never moves.
+// The post-settle reconciliation contract (the 432dc9b7f0 real-host loop):
+// after the startup chain settles, the real OpenCode 2 host's registry reads
+// alternate projection-invisible fields on every pass with ZERO events, and
+// its async tool-registry init can wipe the plugin's own registrations. A
+// continuation is armed only for a change that needs a reconciliation pass:
+// a projected-base movement or lost own output. A steady host converges with
+// no bound line; a pathological host stops at the bound with one log line.
+
+const BOUND_LOG_MARKER = "stopping the recompute continuation"
+
+function capturePluginLog(): { readonly file: string; readonly restore: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), "oqa-conv-log-"))
+  const file = join(dir, "log")
+  _setLoggerForTesting({ filePath: file })
+  return {
+    file,
+    restore: () => {
+      _resetLoggerForTesting()
+      rmSync(dir, { recursive: true, force: true })
+    },
+  }
+}
+
+function boundLinesOf(file: string): number {
+  _flushForTesting()
+  return readFileSync(file, "utf8").split(BOUND_LOG_MARKER).length - 1
+}
+
+// One fired window is one recompute; the chain is quiet when nothing stays armed.
+async function driveUntilQuiet(boot: MimicBoot, cap: number): Promise<number> {
+  let rounds = 0
+  for (; rounds < cap; rounds += 1) {
+    if (boot.scheduler.pendingCount() === 0) break
+    await boot.scheduler.fire()
+    await boot.source.idle()
+  }
+  return rounds
+}
+
 describe("registration moving-record convergence over the host-mimicking context", () => {
-  it("#given the settled startup chain over a host whose reads alternate projection-invisible fields #when the post-init pass arms record-change continuations with zero events #then the recomputes stop inside the bound and no registration re-applies", async () => {
+  it("#given the settled startup chain over a host whose reads alternate projection-invisible fields #when the post-init pass runs with zero events #then exactly one recompute runs, nothing arms, and no bound line logs", async () => {
     // given
     const boot = await bootMimicRegistration({ volatileHostFields: true })
+    const captured = capturePluginLog()
     try {
       await drainToFixedPoint(boot)
       const settledCounts = boot.reloadCounts()
@@ -322,30 +183,150 @@ describe("registration moving-record convergence over the host-mimicking context
       // when: the post-init pass (startV2Runtime's restore) runs over the
       // moving reads and no event ever delivers
       boot.source.scheduleRecompute()
-      let rounds = 0
-      for (; rounds < MAX_RECORD_CONTINUATION_ROUNDS + 3; rounds += 1) {
-        if (boot.scheduler.pendingCount() === 0) break
-        await boot.scheduler.fire()
-        await boot.source.idle()
-      }
+      const rounds = await driveUntilQuiet(boot, 6)
 
-      // then: the chain stopped inside the bound
-      expect(rounds).toBeGreaterThan(0)
-      expect(rounds).toBeLessThanOrEqual(MAX_RECORD_CONTINUATION_ROUNDS)
+      // then: the post-init pass reconciles nothing - the volatile fields
+      // are projection-invisible - so exactly one recompute ran and quieted
+      expect(rounds).toBe(1)
       expect(boot.scheduler.pendingCount()).toBe(0)
+      expect(boundLinesOf(captured.file)).toBe(0)
 
-      // when: three further passes run over the still-moving reads
-      for (let round = 0; round < 3; round += 1) {
+      // when: two further passes run over the still-moving reads
+      for (let round = 0; round < 2; round += 1) {
         boot.source.scheduleRecompute()
         await boot.scheduler.fire()
         await boot.source.idle()
-        // then: nothing arms again and nothing re-applies
+        // then: nothing arms and nothing re-applies
         expect(boot.scheduler.pendingCount()).toBe(0)
         expect(boot.reloadCounts()).toEqual(settledCounts)
       }
       expect(boot.source.getPlan()).toEqual(settledPlan)
     } finally {
       await boot.source.subscription.stop()
+      captured.restore()
+      boot.dispose()
+    }
+  })
+
+  it("#given the settled startup chain #when the host wipes the plugin's own tools #then one detection pass and one restore pass run, the tools are present again, and the chain goes quiet", async () => {
+    // given
+    const boot = await bootMimicRegistration()
+    const captured = capturePluginLog()
+    try {
+      await drainToFixedPoint(boot)
+      const settledCounts = boot.reloadCounts()
+
+      // when: the host's async tool-registry init drops every own tool.
+      // The fake's transform registrations replay on every domain reload,
+      // so the wipe is one-shot: a persistent callback would re-remove the
+      // tools on every rebuild - a re-wiping host, not the observed single
+      // async init wipe.
+      let wiped = false
+      await boot.ctx.tool.transform((editor) => {
+        if (wiped) return
+        wiped = true
+        editor.remove("omo-grep")
+        editor.remove("todowrite")
+        editor.remove("todoread")
+      })
+      const wipedIds = (await boot.ctx.tool.list()).map((tool) => tool.id)
+      expect(wipedIds).not.toContain("omo-grep")
+
+      // when: one pass runs over the wiped editor (the post-init restore
+      // pass, or any later config event's pass)
+      boot.source.scheduleRecompute()
+      const rounds = await driveUntilQuiet(boot, 6)
+
+      // then: exactly the two predicted passes ran - the detection pass
+      // reported the loss and armed, the restore pass re-applied and
+      // reloaded the tools domain once
+      expect(rounds).toBe(2)
+      expect(boot.scheduler.pendingCount()).toBe(0)
+      const restoredIds = (await boot.ctx.tool.list()).map((tool) => tool.id)
+      for (const own of ["omo-grep", "todowrite", "todoread"]) {
+        expect(restoredIds, `own tool ${own} restored`).toContain(own)
+      }
+      expect(boot.reloadCounts().tool).toBe(settledCounts.tool + 1)
+
+      // when: two further passes run over the settled editor
+      for (let round = 0; round < 2; round += 1) {
+        boot.source.scheduleRecompute()
+        await boot.scheduler.fire()
+        await boot.source.idle()
+        expect(boot.scheduler.pendingCount()).toBe(0)
+        expect(boot.reloadCounts().tool).toBe(settledCounts.tool + 1)
+      }
+      expect(boundLinesOf(captured.file)).toBe(0)
+    } finally {
+      await boot.source.subscription.stop()
+      captured.restore()
+      boot.dispose()
+    }
+  })
+
+  it("#given the settled startup chain #when a foreign host tool appears with zero events #then one continuation applies it into the plan and the chain goes quiet", async () => {
+    // given
+    const boot = await bootMimicRegistration()
+    const captured = capturePluginLog()
+    try {
+      await drainToFixedPoint(boot)
+      const settledCounts = boot.reloadCounts()
+
+      // when: the host's tool registry grows (an MCP-server-connect shape)
+      // and one pass observes it
+      await boot.ctx.tool.transform((editor) => {
+        editor.add({
+          id: "late-host-tool",
+          description: "host-only late tool",
+          parameters: { type: "object", properties: {} },
+        })
+      })
+      boot.source.scheduleRecompute()
+      const rounds = await driveUntilQuiet(boot, 6)
+
+      // then: the detection pass armed one continuation, whose pass applied
+      // the moved plan and reloaded the tools domain once
+      expect(rounds).toBe(2)
+      expect(boot.scheduler.pendingCount()).toBe(0)
+      expect(Object.keys(boot.source.getPlan()?.tools ?? {})).toContain("late-host-tool")
+      expect(boot.reloadCounts().tool).toBe(settledCounts.tool + 1)
+      const ids = (await boot.ctx.tool.list()).map((tool) => tool.id)
+      expect(ids).toContain("late-host-tool")
+      expect(ids).toContain("omo-grep")
+      expect(boundLinesOf(captured.file)).toBe(0)
+    } finally {
+      await boot.source.subscription.stop()
+      captured.restore()
+      boot.dispose()
+    }
+  })
+
+  it("#given a pathological host whose projected base moves on every pass #when the reconciliation chain runs #then it stops at the bound with exactly one log line", async () => {
+    // given
+    const boot = await bootMimicRegistration({ volatileHostIds: true })
+    const captured = capturePluginLog()
+    try {
+      await drainToFixedPoint(boot)
+
+      // when: post-settle passes keep seeing a moved projected base
+      boot.source.scheduleRecompute()
+      const rounds = await driveUntilQuiet(boot, MAX_RECONCILE_CONTINUATION_ROUNDS + 4)
+
+      // then: the chain stopped at the bound with one stop line, and
+      // nothing arms afterwards
+      expect(rounds).toBe(MAX_RECONCILE_CONTINUATION_ROUNDS)
+      expect(boot.scheduler.pendingCount()).toBe(0)
+      expect(boundLinesOf(captured.file)).toBe(1)
+      for (let round = 0; round < 2; round += 1) {
+        boot.source.scheduleRecompute()
+        await boot.scheduler.fire()
+        await boot.source.idle()
+        expect(boot.scheduler.pendingCount()).toBe(0)
+      }
+      expect(boundLinesOf(captured.file)).toBe(1)
+    } finally {
+      await boot.source.subscription.stop()
+      captured.restore()
       boot.dispose()
     }
   })
