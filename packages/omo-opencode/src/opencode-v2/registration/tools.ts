@@ -70,7 +70,10 @@ type V2ToolEditor = {
 }
 
 export type ToolRegistrationContext = {
-  readonly planSource: Pick<PlanSource, "registerStep" | "recompute" | "addOwnToolMarkers" | "ownToolMarkers">
+  readonly planSource: Pick<
+    PlanSource,
+    "registerStep" | "recompute" | "addOwnToolMarkers" | "ownToolMarkers" | "reportOwnToolLoss"
+  >
   readonly tool: {
     readonly transform: (callback: (editor: V2ToolEditor) => void) => Promise<unknown>
   }
@@ -156,16 +159,30 @@ export function registerToolTransform(
       const startedAt = Date.now()
       await ctx.tool.transform(
         guardReplayEditor("tool-registration", (editor) => {
-          // The record must exclude the tools this runtime registered: the
-          // real host hands the replay a value that already contains them
-          // (both the registration-time apply and the post-mutation rebuild
-          // do), and an unfiltered record makes every round's plan differ
-          // from the last applied one, reloading forever.
+          // The real host hands the replay a value that already contains
+          // this runtime's own output; an unfiltered record reloads forever.
           const ownMarkers = ctx.planSource.ownToolMarkers
+          const items = editor.list()
+          // A non-own item is always base material (a host tool may carry no
+          // description); an own item drops only on BOTH id and description.
           snapshot.record({
             domain: "tool",
-            value: pristineToolRecordsOf(editor.list().filter((item) => ownMarkers.get(item.id) !== item.description)),
+            value: pristineToolRecordsOf(
+              items.filter((item) => {
+                const marker = ownMarkers.get(item.id)
+                return marker === undefined || marker !== item.description
+              }),
+            ),
           })
+          // A host-side wipe takes the plugin's tools with it; the recorded
+          // base filters own output, so only this live count sees it. An
+          // apply pass restores the tools itself, so only a settled one reports.
+          if (input.apply !== true) {
+            const lost = [...ownMarkers].flatMap(([id, description]) =>
+              items.some((item) => item.id === id && item.description === description) ? [] : [id],
+            )
+            if (lost.length > 0) ctx.planSource.reportOwnToolLoss(lost)
+          }
           if (input.apply === true) {
             for (const [name, v2] of v2Tools) applyToolToEditor(name, v2, editor)
           }

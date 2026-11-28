@@ -6,7 +6,7 @@
 // 26 to 28 plug in after it through registerStep.
 
 import type { V1ConfigProjection } from "./v1-config-projection"
-import type { RegistrationPlan } from "./registration-plan"
+import type { RegistrationPlan, PlanDomain } from "./registration-plan"
 import type { HostStateSnapshot } from "./host-state-snapshot"
 import type { PlanSourceContext, PlanSourceEngine } from "./plan-source-context"
 
@@ -50,4 +50,27 @@ export function createPlanStepRegistry(): PlanStepRegistry {
         return byDomain !== 0 ? byDomain : 0
       }),
   }
+}
+
+export const domainReloaders: Record<PlanDomain, (ctx: PlanSourceContext) => Promise<void>> = {
+  agents: (ctx) => ctx.agent.reload(),
+  tools: (ctx) => ctx.tool.reload(),
+  mcp: (ctx) => ctx.mcp.reload(),
+  commands: (ctx) => ctx.command.reload(),
+  provider: (ctx) => ctx.provider.reload(),
+  model: (ctx) => ctx.model.reload(),
+}
+
+// The plan domains a step registration must force-reload exactly once: the
+// host applies a registered editor transform only when its domain reloads
+// (live row L-04). config and permission have no host editor to reload.
+export const STEP_DOMAIN_RELOAD_TARGETS: Record<PlanStepDomain, readonly PlanDomain[]> = {
+  tool: ["tools"],
+  config: [],
+  agent: ["agents"],
+  permission: [],
+  mcp: ["mcp"],
+  command: ["commands"],
+  provider: ["provider"],
+  model: ["model"],
 }

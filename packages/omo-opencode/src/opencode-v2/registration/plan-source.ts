@@ -1,22 +1,27 @@
 // Plan source (task 23): the registration recompute engine. Recomputes the
 // registration plan once at start (the explicit adapter recomputes), then on
-// a host config change or the provider catalog landing (model/provider
-// updated, the host's registry re-resolve), plus a bounded post-startup
-// continuation when a record pass caught a foreign host change.
+// a host config change or the provider catalog landing, plus a bounded
+// continuation armed only by a projected-base movement or lost own output.
+
 import { log } from "../../shared"
 
 import { subscribeV2RawEvents, type V2EventSubscription } from "../events/subscribe-v2-events"
 import { armDebounceWindow, defaultPlanScheduler, drainArmedWindows, type ArmedDebounce } from "./plan-source-debounce"
-import { createRecordContinuation, MAX_RECORD_CONTINUATION_ROUNDS } from "./plan-source-continuation"
-import { changedPlanDomains, noopPlanOf } from "./plan-diff"
+import { createRecordContinuation, MAX_RECONCILE_CONTINUATION_ROUNDS } from "./plan-source-continuation"
+import { changedPlanDomains, jsonDeepEqual, noopPlanOf } from "./plan-diff"
 import { isRegistrationDigestEnabled, logRecomputeDigest } from "./plan-digest"
-import { createPlanStepRegistry, type PlanStepDomain, type PlanStepRegistry } from "./plan-steps"
+import {
+  createPlanStepRegistry,
+  domainReloaders,
+  STEP_DOMAIN_RELOAD_TARGETS,
+  type PlanStepDomain,
+  type PlanStepRegistry,
+} from "./plan-steps"
 import type { PlanSourceContext, PlanSourceEngine, PlanSourceScheduler } from "./plan-source-context"
 import { computeRegistrationPlan } from "./project-config"
 import { type PlanDomain, type RegistrationPlan } from "./registration-plan"
 import { guardReplayStep } from "./replay-guard"
 import { createHostStateSnapshot, type HostStateSnapshot } from "./host-state-snapshot"
-
 // Subscribed events: config.updated (a real host config change) plus
 // model.updated and provider.updated (the host's provider catalog landing).
 // agent.updated and command.updated are write echoes that would cascade;
@@ -37,6 +42,11 @@ export type PlanSource = {
   // id -> the registered tool description; the record drops an item only on BOTH matching.
   readonly addOwnToolMarkers: (entries: ReadonlyArray<readonly [string, string]>) => void
   readonly ownToolMarkers: ReadonlyMap<string, string>
+  // The tool step reports own registrations missing from the live editor
+  // (accepted post-startup only); consumed per pass as the lost-own-output
+  // continuation signal: the recorded base filters own output, so a wipe
+  // cannot move it.
+  readonly reportOwnToolLoss: (ids: readonly string[]) => void
   readonly recompute: () => Promise<void>
   /** Arms one debounced recompute (the post-init tool-restore pass). */
   readonly scheduleRecompute: () => void
@@ -52,29 +62,6 @@ export type CreatePlanSourceOptions = {
   readonly signal?: AbortSignal
   readonly settleMaxRounds?: number
   readonly directory?: string
-}
-
-const domainReloaders: Record<PlanDomain, (ctx: PlanSourceContext) => Promise<void>> = {
-  agents: (ctx) => ctx.agent.reload(),
-  tools: (ctx) => ctx.tool.reload(),
-  mcp: (ctx) => ctx.mcp.reload(),
-  commands: (ctx) => ctx.command.reload(),
-  provider: (ctx) => ctx.provider.reload(),
-  model: (ctx) => ctx.model.reload(),
-}
-
-// The plan domains a step registration must force-reload exactly once: the
-// host applies a registered editor transform only when its domain reloads
-// (live row L-04). config and permission have no host editor to reload.
-const STEP_DOMAIN_RELOAD_TARGETS: Record<PlanStepDomain, readonly PlanDomain[]> = {
-  tool: ["tools"],
-  config: [],
-  agent: ["agents"],
-  permission: [],
-  mcp: ["mcp"],
-  command: ["commands"],
-  provider: ["provider"],
-  model: ["model"],
 }
 
 export async function createPlanSource(
@@ -95,7 +82,8 @@ export async function createPlanSource(
   let startupDrained = false
   const pendingReloads = new Set<PlanDomain>()
   const ownToolMarkers = new Map<string, string>()
-  const recordContinuation = createRecordContinuation(MAX_RECORD_CONTINUATION_ROUNDS, () => scheduleRecompute())
+  const lostOwnTools = new Set<string>()
+  const recordContinuation = createRecordContinuation(MAX_RECONCILE_CONTINUATION_ROUNDS, () => scheduleRecompute())
 
   steps.register({
     id: "plan-config-pipeline",
@@ -109,9 +97,8 @@ export async function createPlanSource(
   const recomputeNow = async (): Promise<void> => {
     await snapshot.refresh()
     const base = await snapshot.get()
-    // Every step records its pristine base on every recompute (that read
-    // detects a foreign host change) but writes only while the plan moves:
-    // re-applying a settled plan would mutate the registries again forever.
+    // Every step records its pristine base (that read detects a foreign
+    // host change) but writes only while the plan moves.
     let applying = pendingReloads.size > 0
     for (const step of steps.steps()) {
       await step.run({ ctx, engine, snapshot, base, plan: currentPlan, apply: applying })
@@ -122,6 +109,7 @@ export async function createPlanSource(
     }
     if (currentPlan === undefined) {
       snapshot.consumeRecordChanges()
+      lostOwnTools.clear()
       return
     }
     const baseline = lastApplied ?? noopPlanOf(base)
@@ -136,10 +124,23 @@ export async function createPlanSource(
     }
     lastApplied = currentPlan
     const recordChanged = snapshot.consumeRecordChanges()
+    // Rebuild the projected base only when a record moved this pass
+    // (unrecorded-domain changes arrive through the catalog events): a
+    // projected movement reaches the plan only in the next pass, while
+    // projection-invisible churn compares equal and arms nothing.
+    let projectedBaseMoved = false
+    if (recordChanged.size > 0) {
+      await snapshot.refresh()
+      projectedBaseMoved = !jsonDeepEqual(base, await snapshot.get())
+    }
+    const ownToolsLost = lostOwnTools.size > 0
+    lostOwnTools.clear()
     if (isRegistrationDigestEnabled()) {
       logRecomputeDigest({ directory: directory ?? "", plan: currentPlan, base, changed, reloadDomains, recordChanged })
     }
-    if (startupDrained) recordContinuation.onPass(recordChanged)
+    if (startupDrained && recordContinuation.onPass({ projectedBaseMoved, ownToolsLost }) === "armed" && ownToolsLost) {
+      pendingReloads.add("tools")
+    }
   }
 
   const enqueue = (run: () => Promise<void>): Promise<void> => {
@@ -153,15 +154,11 @@ export async function createPlanSource(
     return next
   }
 
-  const enqueueAndForget = (run: () => Promise<void>): void => {
-    void enqueue(run).catch(() => undefined)
-  }
-
   const scheduleRecompute = (): void => {
     armed?.cancel()
     armed = armDebounceWindow(scheduler, debounceMs, () => {
       armed = undefined
-      enqueueAndForget(recomputeNow)
+      void enqueue(recomputeNow).catch(() => undefined)
     })
   }
   const armedOf = (): ArmedDebounce | undefined => armed
@@ -186,6 +183,10 @@ export async function createPlanSource(
       for (const [id, description] of entries) ownToolMarkers.set(id, description)
     },
     ownToolMarkers,
+    reportOwnToolLoss: (ids) => {
+      if (!startupDrained) return
+      for (const id of ids) lostOwnTools.add(id)
+    },
     registerStep: (step) => {
       steps.register(step.domain === "config" ? step : { ...step, run: guardReplayStep(step.id, step.run) })
       for (const domain of STEP_DOMAIN_RELOAD_TARGETS[step.domain]) pendingReloads.add(domain)

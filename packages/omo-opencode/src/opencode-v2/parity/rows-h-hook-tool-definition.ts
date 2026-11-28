@@ -48,6 +48,7 @@ async function checkToolDefinitionRefresh(): Promise<void> {
     },
     addOwnToolMarkers: () => undefined,
     ownToolMarkers: new Map<string, string>(),
+    reportOwnToolLoss: () => undefined,
     recompute: async () => {
       for (const step of registered) await step.run({ ctx, engine, snapshot, base, plan: undefined, apply: true })
     },

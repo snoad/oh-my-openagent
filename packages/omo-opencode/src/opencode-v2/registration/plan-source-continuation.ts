@@ -1,44 +1,56 @@
-// Bounded post-startup continuation policy (the record-change chain). A
-// record pass that caught a foreign host change arms one debounced
-// continuation so the moved base gets its reconciliation pass; consecutive
-// deltas beyond the bound mean a record whose raw value moves on every read
-// (the real OpenCode 2 host does this after activation), and an unbounded
-// chain would recompute for the life of the process.
+// Bounded post-startup continuation policy. A pass arms the debounced
+// reconciliation recompute only for a change that needs one: a projected-base
+// movement (a foreign change recorded this pass reaches the plan only in the
+// next pass) or lost own output (the base filters the plugin's own tools, so
+// a host-side wipe is invisible to the projection). Projection-invisible
+// registry churn - the agent name form, a host tool's description - produces
+// neither signal and arms nothing, so a steady host never continues.
 
 import { log } from "../../shared"
 
-// Bound justification: a settling host never needs more post-startup rounds
-// than the startup drain itself allows (settleMaxRounds); more consecutive
-// record deltas mean a moving record, not a host change.
-export const MAX_RECORD_CONTINUATION_ROUNDS = 16
+// Bound justification: one real own-tool wipe costs two passes (a detection
+// pass that reports the loss, a restore pass that re-applies and reloads the
+// tools domain); eight rounds tolerate four back-to-back wipe cycles, far
+// beyond the single async tool-registry init wipe observed on the real host.
+// A steady host arms nothing and never reaches the bound.
+export const MAX_RECONCILE_CONTINUATION_ROUNDS = 8
 
 const LOG_MARKER = "[opencode-v2] plan-source"
 
+export type ReconcileSignals = {
+  readonly projectedBaseMoved: boolean
+  readonly ownToolsLost: boolean
+}
+
+export type ContinuationVerdict = "armed" | "stopped" | "settled"
+
 export type RecordContinuation = {
-  readonly onPass: (changedDomains: ReadonlySet<string>) => void
+  readonly onPass: (signals: ReconcileSignals) => ContinuationVerdict
 }
 
 export function createRecordContinuation(bound: number, arm: () => void): RecordContinuation {
   let rounds = 0
   let stopped = false
   return {
-    onPass: (changedDomains) => {
-      if (changedDomains.size === 0) {
+    onPass: (signals) => {
+      if (!signals.projectedBaseMoved && !signals.ownToolsLost) {
         rounds = 0
         stopped = false
-        return
+        return "settled"
       }
-      if (stopped) return
+      if (stopped) return "stopped"
       rounds += 1
       if (rounds >= bound) {
         stopped = true
         log(
-          `${LOG_MARKER}: record changes persisted across ${String(rounds)} consecutive recomputes ` +
-            `(${[...changedDomains].join(",")}); stopping the recompute continuation`,
+          `${LOG_MARKER}: forced reconciliation passes persisted across ${String(rounds)} consecutive ` +
+            `recomputes (projected base moved: ${String(signals.projectedBaseMoved)}, own tools lost: ` +
+            `${String(signals.ownToolsLost)}); stopping the recompute continuation`,
         )
-        return
+        return "stopped"
       }
       arm()
+      return "armed"
     },
   }
 }
